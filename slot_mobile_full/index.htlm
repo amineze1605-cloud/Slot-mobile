@@ -40,13 +40,10 @@
 </head>
 <body>
 
-    <!-- ÉCRAN DE CHARGEMENT -->
     <div id="loader">Chargement…</div>
 
-    <!-- CANVAS POUR PIXI -->
     <canvas id="game"></canvas>
 
-    <!-- SCRIPT DU SLOT -->
     <script src="script.js"></script>
 
 </body>
