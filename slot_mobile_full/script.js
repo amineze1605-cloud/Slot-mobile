@@ -88,10 +88,10 @@ function initPixi() {
       setLoaderText("Erreur chargement spritesheet");
     });
 
-    // Chargement du spritesheet
-    PIXI.Loader.shared
-      .add("symbols", "assets/spritesheet.json")
-      .load(onAssetsLoaded);
+    // Chargement direct de l'image spritesheet.png
+PIXI.Loader.shared
+  .add("symbols", "assets/spritesheet.png")
+  .load(onAssetsLoaded);
 
     setLoaderText("Chargement des ressources…");
   } catch (e) {
