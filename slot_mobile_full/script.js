@@ -1,23 +1,28 @@
 // script.js
-// Jeu Slot Mobile Pro - Frontend PIXI + Audio HTML5
-// Place ce fichier dans: slot_mobile_full/script.js
+// Frontend PIXI pour Slot Mobile Pro
 
-// -----------------------------------------------------
+// ------------------------------------------------------
 // Références DOM
-// -----------------------------------------------------
+// ------------------------------------------------------
 const canvas = document.getElementById("game");
-const loaderOverlay = document.getElementById("loader"); // <div id="loader">Chargement…</div>
-
-const overlay = document.getElementById("overlay");       // peut être null (pas grave)
-const spinButton = document.getElementById("spinButton"); // peut être null aussi
+const loaderOverlay = document.getElementById("loader");
+const overlay = document.getElementById("overlay");
+const spinButton = document.getElementById("spin");
 const statusText = document.getElementById("status");
 const balanceEl = document.getElementById("balance");
 const betEl = document.getElementById("bet");
 const winEl = document.getElementById("win");
 
-// -----------------------------------------------------------------------------
-// Audio (HTML5) - chemins des fichiers
-// -----------------------------------------------------------------------------
+// Petit helper pour afficher des messages dans le loader
+function setLoaderText(msg) {
+  if (loaderOverlay) {
+    loaderOverlay.textContent = msg;
+  }
+}
+
+// ------------------------------------------------------
+// Audio (HTML5)
+// ------------------------------------------------------
 const sounds = {
   spin: new Audio("assets/audio/spin.wav"),
   stop: new Audio("assets/audio/stop.wav"),
@@ -30,84 +35,112 @@ Object.values(sounds).forEach((a) => {
   a.volume = 0.6;
 });
 
-// Déblocage du son sur iOS (première interaction utilisateur)
+// Déblocage du son sur iOS (premier touch)
 function unlockAudio() {
   Object.values(sounds).forEach((s) => {
-    s.muted = true;
-    s.play().catch(() => {});
-    s.pause();
-    s.currentTime = 0;
-    s.muted = false;
+    try {
+      s.muted = true;
+      s.play().catch(() => {});
+      s.pause();
+      s.currentTime = 0;
+      s.muted = false;
+    } catch (_) {}
   });
 }
 
-// -----------------------------------------------------------------------------
-// Variables jeu
-// -----------------------------------------------------------------------------
+// ------------------------------------------------------
+// Variables de jeu
+// ------------------------------------------------------
 let app;
 let symbolTextures = [];
 let reels = [];
 
 const COLS = 5;
 const ROWS = 3;
-const SYMBOLS_COUNT = 6; // Doit correspondre à randInt(6) côté serveur
+const SYMBOLS_COUNT = 6; // doit correspondre au spritesheet
 
 let balance = 1000;
 let bet = 1;
 let lastWin = 0;
 let spinning = false;
 
-// -----------------------------------------------------------------------------
+// ------------------------------------------------------
 // Initialisation PIXI
-// -----------------------------------------------------------------------------
+// ------------------------------------------------------
 function initPixi() {
-  app = new PIXI.Application({
-    view: canvas,
-    resizeTo: window,
-    backgroundColor: 0x050814,
-    antialias: true,
-  });
+  try {
+    if (!canvas) {
+      console.error("Canvas #game introuvable");
+      setLoaderText("Erreur : canvas introuvable");
+      return;
+    }
 
-  // Chargement du spritesheet
-  PIXI.Loader.shared
-    .add("symbols", "assets/spritesheet.json")
-    .load(onAssetsLoaded);
-}
+    app = new PIXI.Application({
+      view: canvas,
+      resizeTo: window,
+      backgroundColor: 0x050814,
+      antialias: true,
+    });
 
-// -----------------------------------------------------------------------------
-// Chargement terminé
-// -----------------------------------------------------------------------------
-function onAssetsLoaded(loader, resources) {
-  const sheet = resources.symbols.spritesheet;
+    // Gestion d'erreur du loader PIXI
+    PIXI.Loader.shared.onError.add((err) => {
+      console.error("Erreur loader PIXI :", err);
+      setLoaderText("Erreur chargement spritesheet");
+    });
 
-  // Textures des symboles (si jamais le spritesheet est vide,
-  // symbolTextures sera [], et on affichera des carrés blancs)
-  symbolTextures = sheet ? Object.values(sheet.textures) : [];
+    // Chargement du spritesheet
+    PIXI.Loader.shared
+      .add("symbols", "assets/spritesheet.json")
+      .load(onAssetsLoaded);
 
-  // Construire la scène puis brancher les interactions
-  buildSlotScene();
-  setupUI();
-
-  // ➜ Cacher l’écran "Chargement..."
-  if (loaderOverlay) {
-    loaderOverlay.style.display = "none";
+    setLoaderText("Chargement des ressources…");
+  } catch (e) {
+    console.error("Erreur dans initPixi :", e);
+    setLoaderText("Erreur JS : " + e.message);
   }
 }
 
-// -----------------------------------------------------------------------------
-// Construction de la scène slot (5x3)
-// -----------------------------------------------------------------------------
+// ------------------------------------------------------
+// Chargement terminé
+// ------------------------------------------------------
+function onAssetsLoaded(loader, resources) {
+  try {
+    const res = resources.symbols;
+    const sheet = res && res.spritesheet;
+
+    if (!sheet) {
+      console.warn("Spritesheet vide ou invalide, textures par défaut.");
+      symbolTextures = [];
+    } else {
+      symbolTextures = Object.values(sheet.textures || {});
+    }
+
+    buildSlotScene();
+    setupUI();
+
+    if (loaderOverlay) {
+      loaderOverlay.style.display = "none";
+    }
+  } catch (e) {
+    console.error("Erreur dans onAssetsLoaded :", e);
+    setLoaderText("Erreur : " + e.message);
+  }
+}
+
+// ------------------------------------------------------
+// Construction de la scène (5x3)
+// ------------------------------------------------------
 function buildSlotScene() {
   const w = app.renderer.width;
   const h = app.renderer.height;
 
   const reelWidth = w * 0.13;
-  const totalReelWidth = reelWidth * COLS + reelWidth * 0.2;
+  const totalReelWidth = reelWidth * COLS;
   const symbolSize = (h * 0.5) / ROWS;
 
   const slotContainer = new PIXI.Container();
   app.stage.addChild(slotContainer);
-  slotContainer.x = (w - totalReelWidth) / 2;
+  slotContainer.x = (w - totalReelWidth) * 0.5;
   slotContainer.y = h * 0.2;
 
   reels = [];
@@ -115,7 +148,7 @@ function buildSlotScene() {
   for (let c = 0; c < COLS; c++) {
     const reelContainer = new PIXI.Container();
     slotContainer.addChild(reelContainer);
-    reelContainer.x = c * (totalReelWidth / COLS);
+    reelContainer.x = c * (reelWidth + 4);
 
     const reel = {
       container: reelContainer,
@@ -140,73 +173,54 @@ function buildSlotScene() {
   }
 }
 
-// Récupérer une texture à partir d’un index (0..SYMBOLS_COUNT-1)
+// Récupérer une texture à partir d’un index
 function getTextureByIndex(index) {
   if (!symbolTextures.length) {
     return PIXI.Texture.WHITE;
   }
   const safeIndex = index % symbolTextures.length;
-  return symbolTextures[safeIndex] || symbolTextures[0];
+  return symbolTextures[safeIndex];
 }
 
-// -----------------------------------------------------
+// ------------------------------------------------------
 // UI & interactions
-// -----------------------------------------------------
-// -----------------------------------------------------
-// UI & interactions
-// -----------------------------------------------------
+// ------------------------------------------------------
 function setupUI() {
   updateUI();
 
-  // 1er tap : débloque le son, puis on utilise le canvas pour lancer les spins
-  if (canvas) {
+  // Overlay d’activation audio (si présent dans le HTML)
+  if (overlay) {
+    overlay.style.display = "flex";
+
     const start = (e) => {
       e.preventDefault();
-
-      // essayer de débloquer le son iOS
       unlockAudio();
-
-      // on cache éventuellement le loader si jamais il est encore là
-      if (loaderOverlay) {
-        loaderOverlay.style.display = "none";
+      overlay.style.display = "none";
+      if (statusText) {
+        statusText.textContent = "Prêt à jouer";
       }
-
-      // on enlève ces handlers "start"
-      canvas.removeEventListener("click", start);
-      canvas.removeEventListener("touchstart", start);
-
-      // ➜ À partir de maintenant, chaque tap lance un spin
-      canvas.addEventListener("click", onSpinClick);
-      canvas.addEventListener("touchstart", (ev) => {
-        ev.preventDefault();
-        onSpinClick();
-      });
     };
 
-    canvas.addEventListener("click", start);
-    canvas.addEventListener("touchstart", start);
+    overlay.addEventListener("click", start);
+    overlay.addEventListener("touchstart", start);
   }
 
-  // Si un bouton HTML existe un jour, on le branche aussi (optionnel)
+  // Bouton SPIN (si présent dans le HTML)
   if (spinButton) {
     spinButton.addEventListener("click", onSpinClick);
-    spinButton.addEventListener("touchstart", (e) => {
-      e.preventDefault();
-      onSpinClick();
-    });
   }
 }
 
-// Mise à jour des textes
+// Mise à jour des textes UI
 function updateUI() {
   if (balanceEl) balanceEl.textContent = balance.toString();
   if (betEl) betEl.textContent = bet.toString();
   if (winEl) winEl.textContent = lastWin.toString();
 }
 
-// -----------------------------------------------------------------------------
+// ------------------------------------------------------
 // Gestion du SPIN
-// -----------------------------------------------------------------------------
+// ------------------------------------------------------
 async function onSpinClick() {
   if (spinning) return;
   if (balance < bet) {
@@ -220,7 +234,7 @@ async function onSpinClick() {
   lastWin = 0;
   updateUI();
   playSound("spin");
-  if (statusText) statusText.textContent = "Spin en cours...";
+  if (statusText) statusText.textContent = "Spin en cours…";
 
   try {
     const response = await fetch("/spin", {
@@ -230,13 +244,13 @@ async function onSpinClick() {
     });
 
     const data = await response.json();
-    const grid = data.result; // [ [row0...], [row1...], [row2...] ]
+    const grid = data.result;        // [ [0..5], [..], [..] ]
     const win = data.win || 0;
-    const bonus = data.bonus || { freeSpins: 0, multiplier: 1 };
+    const bonus = data.bonus || {};
 
     applyResultToReels(grid);
 
-    // petite attente pour simuler l’arrêt
+    // petite attente pour simuler le temps de rotation
     setTimeout(() => {
       finishSpin(win, bonus);
     }, 500);
@@ -248,9 +262,12 @@ async function onSpinClick() {
   }
 }
 
-// Applique la grille de symboles aux sprites
+// Applique la grille de symboles au rendu
 function applyResultToReels(grid) {
-  if (!Array.isArray(grid) || grid.length < ROWS) return;
+  if (!Array.isArray(grid) || grid.length !== ROWS) {
+    console.warn("Grille invalide :", grid);
+    return;
+  }
 
   for (let r = 0; r < ROWS; r++) {
     for (let c = 0; c < COLS; c++) {
@@ -258,12 +275,12 @@ function applyResultToReels(grid) {
       const reel = reels[c];
       if (!reel || !reel.symbols[r]) continue;
       const sprite = reel.symbols[r];
-      sprite.texture = getTextureByIndex(Number(value) || 0);
+      sprite.texture = getTextureByIndex(value);
     }
   }
 }
 
-// Fin de spin : mise à jour solde + son
+// Fin de spin : mise à jour solde + sons + message
 function finishSpin(win, bonus) {
   spinning = false;
 
@@ -273,6 +290,7 @@ function finishSpin(win, bonus) {
 
   if (lastWin > 0) {
     playSound("win");
+    if (statusText) statusText.textContent = "Gain : " + lastWin;
   } else {
     playSound("stop");
   }
@@ -282,33 +300,46 @@ function finishSpin(win, bonus) {
     if (statusText) {
       statusText.textContent =
         "Bonus ! " +
-        (bonus.freeSpins ? `${bonus.freeSpins} free spins ` : "") +
+        (bonus.freeSpins ? `${bonus.freeSpins} tours gratuits ` : "") +
         (bonus.multiplier && bonus.multiplier > 1
           ? `x${bonus.multiplier}`
           : "");
     }
   } else if (statusText) {
-    statusText.textContent = lastWin > 0 ? "Gain !" : "Aucun gain";
+    statusText.textContent = lastWin > 0 ? "Bravo !" : "Réessaie";
   }
 }
 
-// -----------------------------------------------------------------------------
+// ------------------------------------------------------
 // Utilitaires
-// -----------------------------------------------------------------------------
+// ------------------------------------------------------
 function playSound(name) {
   const s = sounds[name];
   if (!s) return;
   try {
     s.currentTime = 0;
     s.play().catch(() => {});
-  } catch (e) {
+  } catch (_) {
     // iOS peut refuser, ce n’est pas grave
   }
 }
 
-// -----------------------------------------------------------------------------
+// ------------------------------------------------------
 // Démarrage
-// -----------------------------------------------------------------------------
+// ------------------------------------------------------
 window.addEventListener("load", () => {
-  initPixi();
+  try {
+    initPixi();
+
+    // Sécurité : si au bout de 10s on est toujours sur “Chargement…”
+    // on affiche un message d’erreur générique.
+    setTimeout(() => {
+      if (loaderOverlay && loaderOverlay.style.display !== "none") {
+        setLoaderText("Erreur : chargement trop long (JS)");
+      }
+    }, 10000);
+  } catch (e) {
+    console.error("Erreur globale :", e);
+    setLoaderText("Erreur : " + e.message);
+  }
 });
