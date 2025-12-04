@@ -149,28 +149,51 @@ function getTextureByIndex(index) {
   return symbolTextures[safeIndex] || symbolTextures[0];
 }
 
-// -----------------------------------------------------------------------------
+// -----------------------------------------------------
 // UI & interactions
-// -----------------------------------------------------------------------------
+// -----------------------------------------------------
+// -----------------------------------------------------
+// UI & interactions
+// -----------------------------------------------------
 function setupUI() {
   updateUI();
 
-  if (overlay) {
-    overlay.style.display = "flex";
+  // 1er tap : débloque le son, puis on utilise le canvas pour lancer les spins
+  if (canvas) {
     const start = (e) => {
       e.preventDefault();
+
+      // essayer de débloquer le son iOS
       unlockAudio();
-      overlay.style.display = "none";
-      if (statusText) {
-        statusText.textContent = "Prêt à jouer";
+
+      // on cache éventuellement le loader si jamais il est encore là
+      if (loaderOverlay) {
+        loaderOverlay.style.display = "none";
       }
+
+      // on enlève ces handlers "start"
+      canvas.removeEventListener("click", start);
+      canvas.removeEventListener("touchstart", start);
+
+      // ➜ À partir de maintenant, chaque tap lance un spin
+      canvas.addEventListener("click", onSpinClick);
+      canvas.addEventListener("touchstart", (ev) => {
+        ev.preventDefault();
+        onSpinClick();
+      });
     };
-    overlay.addEventListener("click", start, { once: true });
-    overlay.addEventListener("touchstart", start, { once: true });
+
+    canvas.addEventListener("click", start);
+    canvas.addEventListener("touchstart", start);
   }
 
+  // Si un bouton HTML existe un jour, on le branche aussi (optionnel)
   if (spinButton) {
     spinButton.addEventListener("click", onSpinClick);
+    spinButton.addEventListener("touchstart", (e) => {
+      e.preventDefault();
+      onSpinClick();
+    });
   }
 }
 
