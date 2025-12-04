@@ -102,11 +102,32 @@ PIXI.Loader.shared
 
 // ------------------------------------------------------
 // Chargement terminé
-// ------------------------------------------------------
 function onAssetsLoaded(loader, resources) {
-  try {
-    const res = resources.symbols;
-    const sheet = res && res.spritesheet;
+  // On récupère la texture de base de spritesheet.png
+  const baseTexture = resources.symbols.texture.baseTexture;
+
+  symbolTextures = [];
+
+  // On coupe l'image en SYMBOLS_COUNT morceaux horizontaux
+  const total = SYMBOLS_COUNT;            // 6 chez toi
+  const frameWidth = baseTexture.width / total;
+  const frameHeight = baseTexture.height;
+
+  for (let i = 0; i < total; i++) {
+    const frame = new PIXI.Rectangle(
+      i * frameWidth,
+      0,
+      frameWidth,
+      frameHeight
+    );
+    const texture = new PIXI.Texture(baseTexture, frame);
+    symbolTextures.push(texture);
+  }
+
+  // On construit la scène une fois les textures prêtes
+  buildSlotScene();
+  setupUI();
+}
 
     if (!sheet) {
       console.warn("Spritesheet vide ou invalide, textures par défaut.");
