@@ -82,6 +82,11 @@ function onAssetsLoaded(loader, resources) {
 
   buildSlotScene();
   setupUI();
+
+  // Cacher l’écran de chargement une fois que tout est prêt
+  if (loaderEl) {
+    loaderEl.style.display = "none";
+  }
 }
 
 // -----------------------------------------------------------------------------
