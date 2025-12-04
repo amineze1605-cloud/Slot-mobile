@@ -79,14 +79,18 @@ function initPixi() {
 // -----------------------------------------------------------------------------
 function onAssetsLoaded(loader, resources) {
   const sheet = resources.symbols.spritesheet;
-  symbolTextures = Object.values(sheet.textures);
 
+  // Textures des symboles (si jamais le spritesheet est vide,
+  // symbolTextures sera [], et on affichera des carrés blancs)
+  symbolTextures = sheet ? Object.values(sheet.textures) : [];
+
+  // Construire la scène puis brancher les interactions
   buildSlotScene();
   setupUI();
 
-  // Cacher l’écran de chargement une fois que tout est prêt
-  if (loaderEl) {
-    loaderEl.style.display = "none";
+  // ➜ Cacher l’écran "Chargement..."
+  if (loaderOverlay) {
+    loaderOverlay.style.display = "none";
   }
 }
 
