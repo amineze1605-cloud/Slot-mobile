@@ -8,8 +8,8 @@
   />
   <title>Slot Mobile</title>
 
-  <!-- PIXI.JS (dernière version) -->
-  <script src="https://pixijs.download/release/pixi.min.js"></script>
+  <!-- PIXI.JS : version compatible avec PIXI.Loader.shared -->
+  <script src="https://pixijs.download/v6.5.10/pixi.min.js"></script>
 
   <style>
     html,
@@ -35,6 +35,7 @@
       background: #060b1a;
       z-index: 9999;
       text-align: center;
+      padding: 0 16px;
     }
 
     /* Canvas du jeu en plein écran */
@@ -46,11 +47,21 @@
   </style>
 </head>
 <body>
-  <!-- Message de chargement / tap to start -->
+  <!-- Message de chargement / erreurs -->
   <div id="loader">Chargement…</div>
 
   <!-- Canvas PIXI -->
   <canvas id="game"></canvas>
+
+  <!-- Petit handler pour afficher les erreurs JS à l’écran -->
+  <script>
+    window.addEventListener("error", function (e) {
+      var loader = document.getElementById("loader");
+      if (loader) {
+        loader.textContent = "Erreur JS : " + e.message;
+      }
+    });
+  </script>
 
   <!-- Ton script de jeu -->
   <script src="script.js"></script>
