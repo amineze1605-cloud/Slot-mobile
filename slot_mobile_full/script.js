@@ -12,6 +12,7 @@ const statusText = document.getElementById("statusText");
 const balanceEl = document.getElementById("balanceValue");
 const betEl = document.getElementById("betValue");
 const winEl = document.getElementById("winValue");
+const loaderEl = document.getElementById("loader");
 
 // -----------------------------------------------------------------------------
 // Audio (HTML5) - chemins des fichiers
