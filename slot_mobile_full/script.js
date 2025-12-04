@@ -1,22 +1,15 @@
-// script.js - version PIXI.Assets (compatible Pixi v7/v8)
+// script.js
+// Frontend PIXI pour Slot Mobile
 
-// ----------------------------------------------------
+// --------------------------------------------------
 // Références DOM
-// ----------------------------------------------------
+// --------------------------------------------------
 const canvas = document.getElementById("game");
 const loaderEl = document.getElementById("loader");
 
-// Ces éléments n'existent pas encore dans ton HTML mais le
-// code les gère de façon optionnelle si tu veux les ajouter plus tard.
-const spinButton = document.getElementById("spinButton");
-const statusText = document.getElementById("status");
-const balanceEl = document.getElementById("balance");
-const betEl = document.getElementById("bet");
-const winEl = document.getElementById("win");
-
-// ----------------------------------------------------
+// --------------------------------------------------
 // Audio
-// ----------------------------------------------------
+// --------------------------------------------------
 const sounds = {
   spin: new Audio("assets/audio/spin.wav"),
   stop: new Audio("assets/audio/stop.wav"),
@@ -29,6 +22,7 @@ Object.values(sounds).forEach((a) => {
   a.volume = 0.6;
 });
 
+// petit helper audio (évite les erreurs iOS)
 function playSound(name) {
   const s = sounds[name];
   if (!s) return;
@@ -36,23 +30,13 @@ function playSound(name) {
     s.currentTime = 0;
     s.play().catch(() => {});
   } catch (e) {
-    // iOS peut refuser, ce n'est pas grave
+    // ignore
   }
 }
 
-function unlockAudio() {
-  Object.values(sounds).forEach((s) => {
-    s.muted = true;
-    s.play().catch(() => {});
-    s.pause();
-    s.currentTime = 0;
-    s.muted = false;
-  });
-}
-
-// ----------------------------------------------------
-// Variables jeu
-// ----------------------------------------------------
+// --------------------------------------------------
+// Variables de jeu
+// --------------------------------------------------
 let app;
 let symbolTextures = [];
 let reels = [];
@@ -65,88 +49,61 @@ let bet = 1;
 let lastWin = 0;
 let spinning = false;
 
-// ----------------------------------------------------
-// Utilitaires
-// ----------------------------------------------------
-function randInt(max) {
-  return Math.floor(Math.random() * max);
+// --------------------------------------------------
+// Helpers UI
+// --------------------------------------------------
+function showMessage(text) {
+  if (!loaderEl) return;
+  loaderEl.style.display = "flex";
+  loaderEl.textContent = text;
 }
 
-function getTextureByIndex(index) {
-  if (!symbolTextures.length) {
-    return PIXI.Texture.WHITE;
-  }
-  const safeIndex = index % symbolTextures.length;
-  return symbolTextures[safeIndex];
+function hideMessage() {
+  if (!loaderEl) return;
+  loaderEl.style.display = "none";
 }
 
-function updateUI() {
-  if (balanceEl) balanceEl.textContent = balance.toString();
-  if (betEl) betEl.textContent = bet.toString();
-  if (winEl) winEl.textContent = lastWin.toString();
-}
-
-// Affichage d'erreur lisible sur l'écran
-function showError(message) {
-  console.error(message);
-  if (loaderEl) {
-    loaderEl.textContent = "Erreur JS : " + message;
-  }
-}
-
-// Catch global des erreurs JS pour les voir sur mobile
-window.addEventListener("error", (event) => {
-  const msg =
-    event.message || (event.error && event.error.message) || "Erreur inconnue";
-  showError(msg);
-});
-
-// ----------------------------------------------------
-// Initialisation PIXI + chargement du spritesheet
-// ----------------------------------------------------
+// --------------------------------------------------
+// Initialisation PIXI + chargement des assets
+// --------------------------------------------------
 async function initPixi() {
+  if (!canvas) {
+    console.error("Canvas #game introuvable");
+    return;
+  }
+
+  app = new PIXI.Application({
+    view: canvas,
+    resizeTo: window,
+    backgroundColor: 0x050814,
+    antialias: true,
+  });
+
+  showMessage("Chargement…");
+
   try {
-    if (!canvas) {
-      throw new Error("Canvas #game introuvable");
-    }
-    if (typeof PIXI === "undefined" || !PIXI.Application) {
-      throw new Error("PIXI n'est pas chargé");
-    }
+    // PIXI v8 : on utilise Assets
+    PIXI.Assets.add("symbols", "assets/spritesheet.json");
+    const sheet = await PIXI.Assets.load("symbols");
+    symbolTextures = Object.values(sheet.textures || {});
 
-    if (loaderEl) loaderEl.textContent = "Initialisation du jeu…";
-
-    app = new PIXI.Application({
-      view: canvas,
-      resizeTo: window,
-      backgroundColor: 0x050814,
-      antialias: true,
-    });
-
-    if (loaderEl) loaderEl.textContent = "Chargement des images…";
-
-    // IMPORTANT : avec Pixi v7/v8 on utilise PIXI.Assets
-    const sheet = await PIXI.Assets.load("assets/spritesheet.json");
-    if (!sheet || !sheet.textures) {
-      throw new Error("Spritesheet.json chargé mais sans textures");
-    }
-
-    symbolTextures = Object.values(sheet.textures);
     if (!symbolTextures.length) {
-      throw new Error("Aucune texture trouvée dans spritesheet.json");
+      showMessage("Erreur JS : spritesheet vide");
+      return;
     }
 
     buildSlotScene();
-    setupUI();
-
-    if (loaderEl) loaderEl.textContent = "Touchez pour commencer";
-  } catch (err) {
-    showError(err.message || String(err));
+    hideMessage();
+    showMessage("Touchez pour lancer"); // on réutilise comme overlay
+  } catch (e) {
+    console.error("Erreur chargement assets", e);
+    showMessage("Erreur JS : chargement assets");
   }
 }
 
-// ----------------------------------------------------
+// --------------------------------------------------
 // Construction de la scène slot (5x3)
-// ----------------------------------------------------
+// --------------------------------------------------
 function buildSlotScene() {
   const w = app.renderer.width;
   const h = app.renderer.height;
@@ -157,6 +114,7 @@ function buildSlotScene() {
 
   const slotContainer = new PIXI.Container();
   app.stage.addChild(slotContainer);
+
   slotContainer.x = (w - totalReelWidth) / 2;
   slotContainer.y = h * 0.2;
 
@@ -165,7 +123,7 @@ function buildSlotScene() {
   for (let c = 0; c < COLS; c++) {
     const reelContainer = new PIXI.Container();
     slotContainer.addChild(reelContainer);
-    reelContainer.x = c * (reelWidth + 4);
+    reelContainer.x = c * reelWidth;
 
     const reel = {
       container: reelContainer,
@@ -173,11 +131,11 @@ function buildSlotScene() {
     };
 
     for (let r = 0; r < ROWS; r++) {
-      const idx = randInt(symbolTextures.length);
-      const texture = getTextureByIndex(idx);
+      const idx = Math.floor(Math.random() * symbolTextures.length);
+      const texture = symbolTextures[idx];
       const sprite = new PIXI.Sprite(texture);
 
-      sprite.width = reelWidth;
+      sprite.width = symbolSize;
       sprite.height = symbolSize;
       sprite.x = 0;
       sprite.y = r * (symbolSize + 4);
@@ -188,54 +146,52 @@ function buildSlotScene() {
 
     reels.push(reel);
   }
+
+  // clique sur tout l'écran = SPIN
+  canvas.addEventListener("click", onSpinClick);
+  canvas.addEventListener("touchstart", onSpinClick);
 }
 
-// ----------------------------------------------------
-// UI & interactions
-// ----------------------------------------------------
-function setupUI() {
-  updateUI();
+// --------------------------------------------------
+// Application de la grille renvoyée par le backend
+// --------------------------------------------------
+function applyResultToReels(grid) {
+  if (!Array.isArray(grid) || !grid.length) return;
 
-  if (loaderEl) {
-    const start = (e) => {
-      e.preventDefault();
-      unlockAudio();
-      loaderEl.style.display = "none";
-      if (statusText) statusText.textContent = "Bonne chance !";
-      // Premier spin automatique au premier tap
-      onSpinClick();
-    };
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      const value = grid[r][c];
+      const reel = reels[c];
+      if (!reel || !reel.symbols[r]) continue;
 
-    loaderEl.addEventListener("click", start);
-    loaderEl.addEventListener("touchstart", start, { passive: false });
-  }
-
-  if (spinButton) {
-    spinButton.addEventListener("click", onSpinClick);
-    spinButton.addEventListener("touchstart", (e) => {
-      e.preventDefault();
-      onSpinClick();
-    });
+      const texture = getTextureByIndex(value);
+      reel.symbols[r].texture = texture;
+    }
   }
 }
 
-// ----------------------------------------------------
-// Gestion du SPIN (appel backend /spin)
-// ----------------------------------------------------
-async function onSpinClick() {
+// récupère une texture à partir de l’index du backend
+function getTextureByIndex(index) {
+  if (!symbolTextures.length) {
+    return PIXI.Texture.WHITE;
+  }
+  const safeIndex = index % symbolTextures.length;
+  return symbolTextures[safeIndex] || symbolTextures[0];
+}
+
+// --------------------------------------------------
+// Gestion du SPIN
+// --------------------------------------------------
+async function onSpinClick(e) {
+  e.preventDefault();
+
   if (spinning) return;
-  if (balance < bet) {
-    if (statusText) statusText.textContent = "Solde insuffisant";
-    playSound("stop");
-    return;
-  }
+  if (!app || !symbolTextures.length) return;
 
   spinning = true;
-  balance -= bet;
   lastWin = 0;
-  updateUI();
+  balance -= bet;
   playSound("spin");
-  if (statusText) statusText.textContent = "Spin en cours…";
 
   try {
     const response = await fetch("/spin", {
@@ -244,19 +200,60 @@ async function onSpinClick() {
       body: JSON.stringify({ bet }),
     });
 
-    if (!response.ok) {
-      throw new Error("Réponse /spin invalide : " + response.status);
-    }
-
     const data = await response.json();
-    const grid = data.result;
+    const grid = data.result || [];
     const win = data.win || 0;
     const bonus = data.bonus || { freeSpins: 0, multiplier: 1 };
 
     applyResultToReels(grid);
 
-    // Petite attente pour simuler l'animation
+    // petite pause pour laisser "le temps" d'afficher
     setTimeout(() => {
       finishSpin(win, bonus);
-    }, 500);
-  } catch (err)
+    }, 400);
+  } catch (err) {
+    console.error("Erreur API /spin", err);
+    showMessage("Erreur JS : API");
+    spinning = false;
+    playSound("stop");
+  }
+}
+
+// fin de spin : mise à jour des valeurs + sons
+function finishSpin(win, bonus) {
+  spinning = false;
+
+  lastWin = win || 0;
+  balance += lastWin;
+
+  if (lastWin > 0) {
+    playSound("win");
+  } else {
+    playSound("stop");
+  }
+
+  if (bonus && (bonus.freeSpins > 0 || bonus.multiplier > 1)) {
+    playSound("bonus");
+  }
+
+  // on affiche juste un petit texte dans le loader pour debug
+  if (loaderEl) {
+    if (lastWin > 0) {
+      loaderEl.textContent = `Gagné : ${lastWin}`;
+    } else {
+      loaderEl.textContent = "Touchez pour relancer";
+    }
+  }
+}
+
+// --------------------------------------------------
+// Démarrage
+// --------------------------------------------------
+window.addEventListener("load", () => {
+  try {
+    initPixi();
+  } catch (e) {
+    console.error(e);
+    showMessage("Erreur JS : init");
+  }
+});
