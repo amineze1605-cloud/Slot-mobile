@@ -2,17 +2,18 @@
 // Jeu Slot Mobile Pro - Frontend PIXI + Audio HTML5
 // Place ce fichier dans: slot_mobile_full/script.js
 
-// -----------------------------------------------------------------------------
+// -----------------------------------------------------
 // Références DOM
-// -----------------------------------------------------------------------------
+// -----------------------------------------------------
 const canvas = document.getElementById("game");
-const overlay = document.getElementById("overlay");
-const spinButton = document.getElementById("spinButton");
-const statusText = document.getElementById("statusText");
-const balanceEl = document.getElementById("balanceValue");
-const betEl = document.getElementById("betValue");
-const winEl = document.getElementById("winValue");
-const loaderEl = document.getElementById("loader");
+const loaderOverlay = document.getElementById("loader"); // <div id="loader">Chargement…</div>
+
+const overlay = document.getElementById("overlay");       // peut être null (pas grave)
+const spinButton = document.getElementById("spinButton"); // peut être null aussi
+const statusText = document.getElementById("status");
+const balanceEl = document.getElementById("balance");
+const betEl = document.getElementById("bet");
+const winEl = document.getElementById("win");
 
 // -----------------------------------------------------------------------------
 // Audio (HTML5) - chemins des fichiers
