@@ -193,13 +193,19 @@ function buildSlotScene() {
   const w = app.renderer.width;
   const h = app.renderer.height;
 
-  const reelWidth = w * 0.13;
+  // largeur d'une colonne (un rouleau)
+  const reelWidth = w * 0.16;            // un peu plus large qu'avant
   const totalReelWidth = reelWidth * COLS;
-  const symbolSize = (h * 0.5) / ROWS;
+
+  // taille du symbole : NE DOIT PAS dépasser la largeur de la colonne
+  const maxSymbolFromHeight = (h * 0.5) / ROWS;   // 50% de la hauteur pour le slot
+  const maxSymbolFromWidth  = reelWidth * 0.9;    // 90% de la largeur colonne
+  const symbolSize = Math.min(maxSymbolFromHeight, maxSymbolFromWidth);
 
   const slotContainer = new PIXI.Container();
   app.stage.addChild(slotContainer);
 
+  // centrer le bloc de rouleaux
   slotContainer.x = (w - totalReelWidth) / 2;
   slotContainer.y = h * 0.2;
 
@@ -220,9 +226,11 @@ function buildSlotScene() {
       const texture = symbolTextures[idx];
       const sprite = new PIXI.Sprite(texture);
 
-      sprite.width = symbolSize;
+      sprite.width  = symbolSize;
       sprite.height = symbolSize;
-      sprite.x = 0;
+
+      // centrer le symbole dans la colonne
+      sprite.x = (reelWidth - symbolSize) / 2;
       sprite.y = r * (symbolSize + 4);
 
       reelContainer.addChild(sprite);
@@ -232,7 +240,7 @@ function buildSlotScene() {
     reels.push(reel);
   }
 
-  // clic sur le canvas = SPIN
+  // clic / touch = spin
   canvas.addEventListener("click", onSpinClick);
   canvas.addEventListener("touchstart", onSpinClick);
 }
