@@ -1,5 +1,5 @@
 // script.js
-// Frontend PIXI pour Slot Mobile (spritesheet.png découpée en 12 symboles)
+// Frontend PIXI pour Slot Mobile (spritesheet.png découpé en 12 symboles)
 
 // --------------------------------------------------
 // Références DOM
@@ -14,10 +14,10 @@ const sounds = {
   spin: new Audio("assets/audio/spin.wav"),
   stop: new Audio("assets/audio/stop.wav"),
   win: new Audio("assets/audio/win.wav"),
-  bonus: new Audio("assets/audio/bonus.wav")
+  bonus: new Audio("assets/audio/bonus.wav"),
 };
 
-Object.values(sounds).forEach(function (a) {
+Object.values(sounds).forEach((a) => {
   a.preload = "auto";
   a.volume = 0.6;
 });
@@ -27,10 +27,8 @@ function playSound(name) {
   if (!s) return;
   try {
     s.currentTime = 0;
-    s.play().catch(function () {});
-  } catch (e) {
-    // ignore
-  }
+    s.play().catch(() => {});
+  } catch (e) {}
 }
 
 // --------------------------------------------------
@@ -48,8 +46,15 @@ let bet = 1;
 let lastWin = 0;
 let spinning = false;
 
+// UI PIXI
+let uiContainer;
+let touchText;
+let balanceText;
+let betText;
+let winText;
+
 // --------------------------------------------------
-// Helpers UI
+// Helpers UI (DOM loader)
 // --------------------------------------------------
 function showMessage(text) {
   if (!loaderEl) return;
@@ -63,30 +68,39 @@ function hideMessage() {
 }
 
 // --------------------------------------------------
-// Chargement de spritesheet.png via <img> + BaseTexture
+// Chargement de la spritesheet.png avec PIXI.Texture
 // --------------------------------------------------
 function loadSpritesheet() {
-  return new Promise(function (resolve, reject) {
-    const img = new Image();
-    img.src = "assets/spritesheet.png";
-
-    img.onload = function () {
-      try {
-        if (!PIXI.BaseTexture) {
-          reject(new Error("PIXI.BaseTexture manquant"));
-          return;
-        }
-        // compatible v5 : on crée la baseTexture à partir de l'image
-        const baseTexture = new PIXI.BaseTexture(img);
-        resolve(baseTexture);
-      } catch (e) {
-        reject(e);
+  return new Promise((resolve, reject) => {
+    try {
+      const texture = PIXI.Texture.from("assets/spritesheet.png");
+      if (!texture) {
+        reject(new Error("PIXI.Texture.from a retourné undefined"));
+        return;
       }
-    };
 
-    img.onerror = function (e) {
-      reject(e || new Error("Impossible de charger assets/spritesheet.png"));
-    };
+      const baseTexture = texture.baseTexture;
+      if (!baseTexture) {
+        reject(new Error("texture.baseTexture manquant"));
+        return;
+      }
+
+      // Déjà prête
+      if (baseTexture.valid) {
+        resolve(baseTexture);
+        return;
+      }
+
+      // Attente du chargement
+      baseTexture.once("loaded", () => {
+        resolve(baseTexture);
+      });
+      baseTexture.once("error", (err) => {
+        reject(err || new Error("Erreur chargement baseTexture"));
+      });
+    } catch (e) {
+      reject(e);
+    }
   });
 }
 
@@ -98,39 +112,37 @@ async function initPixi() {
     console.error("Canvas #game introuvable");
     return;
   }
-  if (!window.PIXI || !PIXI.Application) {
+  if (!window.PIXI) {
     console.error("PIXI introuvable");
     showMessage("Erreur JS : PIXI introuvable");
     return;
   }
 
+  showMessage("Chargement…");
+
+  // Création de l'application
   app = new PIXI.Application({
     view: canvas,
     resizeTo: window,
     backgroundColor: 0x050814,
-    antialias: true
+    antialias: true,
   });
 
-  showMessage("Chargement…");
-
   try {
-    // 1) charge l'image spritesheet.png
+    // 1) on charge la spritesheet
     const baseTexture = await loadSpritesheet();
-
     const fullW = baseTexture.width;
     const fullH = baseTexture.height;
-    console.log("spritesheet.png =", fullW, "x", fullH);
 
     // 12 symboles = 3 colonnes x 4 lignes
-    const COLS_SHEET = 3;
-    const ROWS_SHEET = 4;
-    const frameW = fullW / COLS_SHEET;
-    const frameH = fullH / ROWS_SHEET;
+    const SHEET_COLS = 3;
+    const SHEET_ROWS = 4;
+    const frameW = fullW / SHEET_COLS;
+    const frameH = fullH / SHEET_ROWS;
 
     symbolTextures = [];
-
-    for (let r = 0; r < ROWS_SHEET; r++) {
-      for (let c = 0; c < COLS_SHEET; c++) {
+    for (let r = 0; r < SHEET_ROWS; r++) {
+      for (let c = 0; c < SHEET_COLS; c++) {
         const rect = new PIXI.Rectangle(
           c * frameW,
           r * frameH,
@@ -142,29 +154,16 @@ async function initPixi() {
       }
     }
 
-    console.log("Textures découpées :", symbolTextures.length);
-
     if (!symbolTextures.length) {
       showMessage("Erreur JS : spritesheet vide");
       return;
     }
 
-    // 2) construit la scène
+    // 2) on construit la scène + UI
     buildSlotScene();
+    buildUI();
 
-    // 3) cache le loader HTML
-    hideMessage();
-
-    // 4) ajoute un texte "Touchez pour lancer" dans la scène PIXI
-    const infoStyle = new PIXI.TextStyle({
-      fill: 0xffffff,
-      fontSize: 24
-    });
-    const infoText = new PIXI.Text("Touchez pour lancer", infoStyle);
-    infoText.anchor.set(0.5);
-    infoText.x = app.renderer.width / 2;
-    infoText.y = app.renderer.height * 0.15;
-    app.stage.addChild(infoText);
+    hideMessage(); // on enlève l’overlay DOM, tout est prêt
   } catch (e) {
     console.error("Erreur chargement spritesheet.png", e);
     const msg = e && e.message ? e.message : String(e);
@@ -176,18 +175,21 @@ async function initPixi() {
 // Construction de la scène slot (5x3)
 // --------------------------------------------------
 function buildSlotScene() {
-  const w = app.renderer.width;
-  const h = app.renderer.height;
+  if (!app) return;
 
-  const symbolSize = Math.min(w * 0.16, h * 0.16);
-  const reelWidth = symbolSize + 8;
+  const w = app.renderer.view.width;
+  const h = app.renderer.view.height;
+
+  const symbolSize = Math.min(w, h) * 0.12; // taille des symboles
+  const spacing = symbolSize * 0.12; // espace entre symboles
+  const reelWidth = symbolSize + spacing;
   const totalReelWidth = reelWidth * COLS;
 
   const slotContainer = new PIXI.Container();
   app.stage.addChild(slotContainer);
 
   slotContainer.x = (w - totalReelWidth) / 2;
-  slotContainer.y = h * 0.25;
+  slotContainer.y = h * 0.28; // grille un peu remontée
 
   reels = [];
 
@@ -198,7 +200,7 @@ function buildSlotScene() {
 
     const reel = {
       container: reelContainer,
-      symbols: []
+      symbols: [],
     };
 
     for (let r = 0; r < ROWS; r++) {
@@ -209,7 +211,7 @@ function buildSlotScene() {
       sprite.width = symbolSize;
       sprite.height = symbolSize;
       sprite.x = 0;
-      sprite.y = r * (symbolSize + 8);
+      sprite.y = r * (symbolSize + spacing);
 
       reelContainer.addChild(sprite);
       reel.symbols.push(sprite);
@@ -218,8 +220,69 @@ function buildSlotScene() {
     reels.push(reel);
   }
 
+  // Interactions : toucher l'écran pour lancer
   canvas.addEventListener("click", onSpinClick);
   canvas.addEventListener("touchstart", onSpinClick);
+}
+
+// --------------------------------------------------
+// UI PIXI (texte haut + HUD bas)
+// --------------------------------------------------
+function buildUI() {
+  if (!app) return;
+
+  const w = app.renderer.view.width;
+  const h = app.renderer.view.height;
+
+  uiContainer = new PIXI.Container();
+  app.stage.addChild(uiContainer);
+
+  const titleStyle = new PIXI.TextStyle({
+    fontFamily: "system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif",
+    fontSize: 28,
+    fill: 0xffffff,
+  });
+
+  const hudStyle = new PIXI.TextStyle({
+    fontFamily: "system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif",
+    fontSize: 18,
+    fill: 0xffffff,
+  });
+
+  // Texte "Touchez pour lancer"
+  touchText = new PIXI.Text("Touchez pour lancer", titleStyle);
+  touchText.anchor.set(0.5, 0.5);
+  touchText.x = w / 2;
+  touchText.y = h * 0.12;
+  uiContainer.addChild(touchText);
+
+  // HUD bas : balance / bet / win
+  balanceText = new PIXI.Text("", hudStyle);
+  betText = new PIXI.Text("", hudStyle);
+  winText = new PIXI.Text("", hudStyle);
+
+  balanceText.anchor.set(0, 0.5);
+  betText.anchor.set(0.5, 0.5);
+  winText.anchor.set(1, 0.5);
+
+  const hudY = h * 0.92;
+  balanceText.x = w * 0.08;
+  betText.x = w * 0.5;
+  winText.x = w * 0.92;
+
+  balanceText.y = betText.y = winText.y = hudY;
+
+  uiContainer.addChild(balanceText);
+  uiContainer.addChild(betText);
+  uiContainer.addChild(winText);
+
+  updateHUD();
+}
+
+function updateHUD() {
+  if (balanceText) balanceText.text = "Solde : " + balance;
+  if (betText) betText.text = "Mise : " + bet;
+  if (winText) winText.text = "Dernier gain : " + (lastWin || 0);
 }
 
 // --------------------------------------------------
@@ -260,13 +323,16 @@ async function onSpinClick(e) {
   spinning = true;
   lastWin = 0;
   balance -= bet;
+  updateHUD();
   playSound("spin");
+
+  if (touchText) touchText.text = "Lancement…";
 
   try {
     const response = await fetch("/spin", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ bet: bet })
+      body: JSON.stringify({ bet }),
     });
 
     const data = await response.json();
@@ -276,7 +342,7 @@ async function onSpinClick(e) {
 
     applyResultToReels(grid);
 
-    setTimeout(function () {
+    setTimeout(() => {
       finishSpin(win, bonus);
     }, 400);
   } catch (err) {
@@ -284,6 +350,7 @@ async function onSpinClick(e) {
     showMessage("Erreur JS : API");
     spinning = false;
     playSound("stop");
+    if (touchText) touchText.text = "Erreur API";
   }
 }
 
@@ -304,13 +371,24 @@ function finishSpin(win, bonus) {
 
   if (bonus && (bonus.freeSpins > 0 || bonus.multiplier > 1)) {
     playSound("bonus");
+    // plus tard on pourra afficher un message spécial
+  }
+
+  updateHUD();
+
+  if (touchText) {
+    if (lastWin > 0) {
+      touchText.text = "Gagné : " + lastWin + " — touchez pour relancer";
+    } else {
+      touchText.text = "Touchez pour relancer";
+    }
   }
 }
 
 // --------------------------------------------------
 // Démarrage
 // --------------------------------------------------
-window.addEventListener("load", function () {
+window.addEventListener("load", () => {
   try {
     initPixi();
   } catch (e) {
