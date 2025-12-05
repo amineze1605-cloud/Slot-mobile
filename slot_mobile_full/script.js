@@ -85,27 +85,57 @@ function enableStartOverlay() {
 }
 
 // --------------------------------------------------
-// Chargement du spritesheet (compatible v5/v6/v7/v8)
+// Découper le PNG en 12 textures (3 x 4)
 // --------------------------------------------------
-function loadSpritesheet() {
-  // Pixi v7 / v8 : PIXI.Assets
-  if (PIXI.Assets && PIXI.Assets.load) {
-    PIXI.Assets.add("symbols", "assets/spritesheet.json");
-    return PIXI.Assets.load("symbols");
+function sliceSheetToTextures(baseTexture) {
+  const cols = 3; // 3 colonnes
+  const rows = 4; // 4 lignes
+
+  const tileW = baseTexture.width / cols;
+  const tileH = baseTexture.height / rows;
+
+  const textures = [];
+
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const rect = new PIXI.Rectangle(
+        c * tileW,
+        r * tileH,
+        tileW,
+        tileH
+      );
+      const tex = new PIXI.Texture(baseTexture, rect);
+      textures.push(tex);
+    }
   }
 
-  // Anciennes versions : PIXI.Loader
+  return textures;
+}
+
+// Charger le PNG selon la version de PIXI
+async function loadSymbolTextures() {
+  const imgPath = "assets/spritesheet.png";
+
+  // PIXI v7/v8 : Assets
+  if (PIXI.Assets && PIXI.Assets.load) {
+    const tex = await PIXI.Assets.load(imgPath);
+    const baseTexture = tex.baseTexture || tex;
+    return sliceSheetToTextures(baseTexture);
+  }
+
+  // PIXI v5/v6 : Loader
   return new Promise((resolve, reject) => {
     try {
       const loader = new PIXI.Loader();
-      loader.add("symbols", "assets/spritesheet.json");
+      loader.add("symbolSheet", imgPath);
       loader.load((_, resources) => {
-        const res = resources.symbols;
-        if (!res || !res.spritesheet) {
-          reject(new Error("Spritesheet manquant dans resources.symbols"));
+        const res = resources.symbolSheet;
+        if (!res || !res.texture) {
+          reject(new Error("Impossible de charger " + imgPath));
           return;
         }
-        resolve(res.spritesheet);
+        const baseTexture = res.texture.baseTexture;
+        resolve(sliceSheetToTextures(baseTexture));
       });
       loader.onError.add((err) => {
         reject(err || new Error("Erreur Loader PIXI"));
@@ -136,8 +166,8 @@ async function initPixi() {
   showMessage("Chargement…");
 
   try {
-    const sheet = await loadSpritesheet();
-    symbolTextures = Object.values(sheet.textures || {});
+    // on charge le PNG et on le découpe en 12 symboles
+    symbolTextures = await loadSymbolTextures();
 
     if (!symbolTextures.length) {
       showMessage("Erreur JS : spritesheet vide");
@@ -202,7 +232,7 @@ function buildSlotScene() {
     reels.push(reel);
   }
 
-  // Pour les spins suivants, on clique directement sur le canvas
+  // clic sur le canvas = SPIN
   canvas.addEventListener("click", onSpinClick);
   canvas.addEventListener("touchstart", onSpinClick);
 }
@@ -289,9 +319,6 @@ function finishSpin(win, bonus) {
   if (bonus && (bonus.freeSpins > 0 || bonus.multiplier > 1)) {
     playSound("bonus");
   }
-
-  // si tu veux, tu peux ré-utiliser le loader pour afficher le gain
-  // mais on ne le remet pas en plein écran pour ne pas cacher le jeu
 }
 
 // --------------------------------------------------
