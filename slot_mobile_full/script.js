@@ -1,5 +1,5 @@
 // script.js
-// Frontend PIXI pour Slot Mobile (spritesheet.png 3x4 = 12 symboles)
+// Slot Mobile : spritesheet PNG + animation de SPIN
 
 // --------------------------------------------------
 // Références DOM
@@ -46,6 +46,13 @@ let bet = 1;
 let lastWin = 0;
 let spinning = false;
 
+// pour l'animation
+let symbolSizeGlobal = 0;
+const GAP = 8;                 // espace vertical entre symboles
+let pendingResult = null;      // { grid, win, bonus }
+let spinStartTime = 0;
+const MIN_SPIN_MS = 600;       // durée mini de spin avant arrêt
+
 // --------------------------------------------------
 // Helpers UI
 // --------------------------------------------------
@@ -61,7 +68,7 @@ function hideMessage() {
 }
 
 // --------------------------------------------------
-// Chargement manuel de spritesheet.png avec BaseTexture.from
+// Chargement manuel de spritesheet.png
 // --------------------------------------------------
 function loadSpritesheet() {
   return new Promise((resolve, reject) => {
@@ -92,7 +99,7 @@ async function initPixi() {
     return;
   }
   if (!window.PIXI) {
-    console.error("PIXI introuvable");
+    console.error("PIXI introuvable (CDN ?)");
     showMessage("Erreur JS : PIXI introuvable");
     return;
   }
@@ -113,7 +120,7 @@ async function initPixi() {
     const fullH = baseTexture.height;
     console.log("spritesheet.png =", fullW, "x", fullH);
 
-    // 12 symboles = 3 colonnes x 4 lignes
+    // 12 symboles = 3 colonnes x 4 lignes sur ton image
     const COLS_SHEET = 3;
     const ROWS_SHEET = 4;
     const frameW = fullW / COLS_SHEET;
@@ -142,28 +149,25 @@ async function initPixi() {
     }
 
     buildSlotScene();
-    hideMessage(); // on enlève le texte, on laisse juste la grille
+    hideMessage();
+    showMessage("Touchez pour lancer");
   } catch (e) {
     console.error("Erreur chargement spritesheet.png", e);
-    const msg = e && e.message ? e.message : String(e);
+    const msg = (e && e.message) ? e.message : String(e);
     showMessage("Erreur JS : chargement assets (" + msg + ")");
   }
 }
 
 // --------------------------------------------------
-// Construction de la scène slot (5x3)
+// Construction de la scène slot (5x3) + ticker animation
 // --------------------------------------------------
 function buildSlotScene() {
-  if (!app || !app.renderer) {
-    showMessage("Erreur JS : app PIXI manquante");
-    return;
-  }
-
   const w = app.renderer.width;
   const h = app.renderer.height;
 
-  // Taille + espacement des symboles
   const symbolSize = Math.min(w * 0.16, h * 0.16);
+  symbolSizeGlobal = symbolSize;
+
   const reelWidth = symbolSize + 8;
   const totalReelWidth = reelWidth * COLS;
 
@@ -171,7 +175,7 @@ function buildSlotScene() {
   app.stage.addChild(slotContainer);
 
   slotContainer.x = (w - totalReelWidth) / 2;
-  slotContainer.y = h * 0.25; // grille un peu remontée
+  slotContainer.y = h * 0.25;
 
   reels = [];
 
@@ -193,7 +197,7 @@ function buildSlotScene() {
       sprite.width = symbolSize;
       sprite.height = symbolSize;
       sprite.x = 0;
-      sprite.y = r * (symbolSize + 8);
+      sprite.y = r * (symbolSize + GAP);
 
       reelContainer.addChild(sprite);
       reel.symbols.push(sprite);
@@ -202,8 +206,56 @@ function buildSlotScene() {
     reels.push(reel);
   }
 
+  // ticker pour l'animation des rouleaux
+  app.ticker.add(updateSpin);
+
   canvas.addEventListener("click", onSpinClick);
   canvas.addEventListener("touchstart", onSpinClick);
+}
+
+// --------------------------------------------------
+// Animation des rouleaux pendant le SPIN
+// --------------------------------------------------
+function updateSpin(delta) {
+  if (!spinning) return;
+
+  const speed = symbolSizeGlobal * 0.35; // pixels par frame ~ vitesse
+
+  reels.forEach((reel) => {
+    reel.symbols.forEach((sprite) => {
+      sprite.y += speed * delta;
+
+      const maxY = (ROWS - 1) * (symbolSizeGlobal + GAP);
+
+      if (sprite.y > maxY + symbolSizeGlobal) {
+        // remonte le symbole tout en haut
+        sprite.y -= ROWS * (symbolSizeGlobal + GAP);
+
+        // texture aléatoire pendant la rotation
+        const idx = Math.floor(Math.random() * symbolTextures.length);
+        sprite.texture = symbolTextures[idx];
+      }
+    });
+  });
+
+  // si on a déjà reçu le résultat du backend et que le temps mini est passé,
+  // on arrête le spin et on affiche la vraie grille
+  if (pendingResult && Date.now() - spinStartTime >= MIN_SPIN_MS) {
+    const { grid, win, bonus } = pendingResult;
+    pendingResult = null;
+
+    // remet les symboles bien alignés
+    reels.forEach((reel) => {
+      for (let r = 0; r < ROWS; r++) {
+        const sprite = reel.symbols[r];
+        sprite.y = r * (symbolSizeGlobal + GAP);
+      }
+    });
+
+    spinning = false;
+    applyResultToReels(grid);
+    finishSpin(win, bonus);
+  }
 }
 
 // --------------------------------------------------
@@ -228,12 +280,12 @@ function getTextureByIndex(index) {
   if (!symbolTextures.length) {
     return PIXI.Texture.WHITE;
   }
-  const safeIndex = index % symbolTextures.length; // 0..11
+  const safeIndex = index % symbolTextures.length;
   return symbolTextures[safeIndex] || symbolTextures[0];
 }
 
 // --------------------------------------------------
-// Gestion du SPIN
+// Gestion du SPIN (clic)
 // --------------------------------------------------
 async function onSpinClick(e) {
   e.preventDefault();
@@ -242,6 +294,9 @@ async function onSpinClick(e) {
   if (!app || !symbolTextures.length) return;
 
   spinning = true;
+  spinStartTime = Date.now();
+  pendingResult = null;
+
   lastWin = 0;
   balance -= bet;
   playSound("spin");
@@ -258,11 +313,8 @@ async function onSpinClick(e) {
     const win = data.win || 0;
     const bonus = data.bonus || { freeSpins: 0, multiplier: 1 };
 
-    applyResultToReels(grid);
-
-    setTimeout(() => {
-      finishSpin(win, bonus);
-    }, 400);
+    // on garde le résultat de côté, le ticker s'en occupe
+    pendingResult = { grid, win, bonus };
   } catch (err) {
     console.error("Erreur API /spin", err);
     showMessage("Erreur JS : API");
@@ -290,8 +342,13 @@ function finishSpin(win, bonus) {
     playSound("bonus");
   }
 
-  // On n'affiche plus le loader par-dessus,
-  // donc pas de texte ici pour ne pas gêner l'écran.
+  if (loaderEl) {
+    if (lastWin > 0) {
+      loaderEl.textContent = `Gagné : ${lastWin}`;
+    } else {
+      loaderEl.textContent = "Touchez pour relancer";
+    }
+  }
 }
 
 // --------------------------------------------------
@@ -302,7 +359,7 @@ window.addEventListener("load", () => {
     initPixi();
   } catch (e) {
     console.error(e);
-    const msg = e && e.message ? e.message : String(e);
+    const msg = (e && e.message) ? e.message : String(e);
     showMessage("Erreur JS : init (" + msg + ")");
   }
 });
