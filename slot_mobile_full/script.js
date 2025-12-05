@@ -34,8 +34,8 @@ function playSound(name) {
 // --------------------------------------------------
 // Variables de jeu
 // --------------------------------------------------
-let app;
-let symbolTextures = [];
+let app;                // instance PIXI
+let symbolTextures = []; // textures découpées
 let reels = [];
 
 const COLS = 5;
@@ -62,7 +62,6 @@ function hideMessage() {
 
 // --------------------------------------------------
 // Chargement manuel de spritesheet.png
-// (sans utiliser PIXI.BaseTexture.from)
 // --------------------------------------------------
 function loadSpritesheet() {
   return new Promise((resolve, reject) => {
@@ -71,8 +70,8 @@ function loadSpritesheet() {
 
     img.onload = () => {
       try {
-        // On crée une Texture à partir de l'image,
-        // puis on récupère sa baseTexture / source
+        // On crée une texture à partir de l'image,
+        // puis on récupère sa baseTexture
         const texture = PIXI.Texture.from(img);
         const baseTexture = texture.baseTexture || texture.source;
 
@@ -107,6 +106,7 @@ async function initPixi() {
     return;
   }
 
+  // on crée l'app ici, avant le try/catch
   app = new PIXI.Application({
     view: canvas,
     resizeTo: window,
@@ -151,7 +151,8 @@ async function initPixi() {
       return;
     }
 
-    buildSlotScene();
+    // IMPORTANT : on passe l'app en argument
+    buildSlotScene(app);
     hideMessage();
     showMessage("Touchez pour lancer");
   } catch (e) {
@@ -164,16 +165,25 @@ async function initPixi() {
 // --------------------------------------------------
 // Construction de la scène slot (5x3)
 // --------------------------------------------------
-function buildSlotScene() {
-  const w = app.renderer.width;
-  const h = app.renderer.height;
+function buildSlotScene(appInstance) {
+  // Sécurité : si l'app n'est pas prête
+  if (!appInstance || !appInstance.renderer) {
+    console.error("App PIXI non initialisée correctement", appInstance);
+    showMessage("Erreur JS : app non initialisée");
+    return;
+  }
+
+  // on essaye plusieurs façons de récupérer largeur/hauteur
+  const renderer = appInstance.renderer;
+  const w = renderer.width || (renderer.view && renderer.view.width) || window.innerWidth;
+  const h = renderer.height || (renderer.view && renderer.view.height) || window.innerHeight;
 
   const symbolSize = Math.min(w * 0.16, h * 0.16);
   const reelWidth = symbolSize + 8;
   const totalReelWidth = reelWidth * COLS;
 
   const slotContainer = new PIXI.Container();
-  app.stage.addChild(slotContainer);
+  appInstance.stage.addChild(slotContainer);
 
   slotContainer.x = (w - totalReelWidth) / 2;
   slotContainer.y = h * 0.25;
@@ -207,6 +217,7 @@ function buildSlotScene() {
     reels.push(reel);
   }
 
+  // Gestion des clics pour lancer le spin
   canvas.addEventListener("click", onSpinClick);
   canvas.addEventListener("touchstart", onSpinClick);
 }
