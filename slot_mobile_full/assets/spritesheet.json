@@ -1,0 +1,73 @@
+{
+  "frames": {
+    "symbol_0": {
+      "frame": { "x": 0, "y": 0, "w": 512, "h": 384 },
+      "spriteSourceSize": { "x": 0, "y": 0, "w": 512, "h": 384 },
+      "sourceSize": { "w": 512, "h": 384 }
+    },
+    "symbol_1": {
+      "frame": { "x": 512, "y": 0, "w": 512, "h": 384 },
+      "spriteSourceSize": { "x": 0, "y": 0, "w": 512, "h": 384 },
+      "sourceSize": { "w": 512, "h": 384 }
+    },
+    "symbol_2": {
+      "frame": { "x": 1024, "y": 0, "w": 512, "h": 384 },
+      "spriteSourceSize": { "x": 0, "y": 0, "w": 512, "h": 384 },
+      "sourceSize": { "w": 512, "h": 384 }
+    },
+
+    "symbol_3": {
+      "frame": { "x": 0, "y": 384, "w": 512, "h": 384 },
+      "spriteSourceSize": { "x": 0, "y": 0, "w": 512, "h": 384 },
+      "sourceSize": { "w": 512, "h": 384 }
+    },
+    "symbol_4": {
+      "frame": { "x": 512, "y": 384, "w": 512, "h": 384 },
+      "spriteSourceSize": { "x": 0, "y": 0, "w": 512, "h": 384 },
+      "sourceSize": { "w": 512, "h": 384 }
+    },
+    "symbol_5": {
+      "frame": { "x": 1024, "y": 384, "w": 512, "h": 384 },
+      "spriteSourceSize": { "x": 0, "y": 0, "w": 512, "h": 384 },
+      "sourceSize": { "w": 512, "h": 384 }
+    },
+
+    "symbol_6": {
+      "frame": { "x": 0, "y": 768, "w": 512, "h": 384 },
+      "spriteSourceSize": { "x": 0, "y": 0, "w": 512, "h": 384 },
+      "sourceSize": { "w": 512, "h": 384 }
+    },
+    "symbol_7": {
+      "frame": { "x": 512, "y": 768, "w": 512, "h": 384 },
+      "spriteSourceSize": { "x": 0, "y": 0, "w": 512, "h": 384 },
+      "sourceSize": { "w": 512, "h": 384 }
+    },
+    "symbol_8": {
+      "frame": { "x": 1024, "y": 768, "w": 512, "h": 384 },
+      "spriteSourceSize": { "x": 0, "y": 0, "w": 512, "h": 384 },
+      "sourceSize": { "w": 512, "h": 384 }
+    },
+
+    "symbol_9": {
+      "frame": { "x": 0, "y": 1152, "w": 512, "h": 384 },
+      "spriteSourceSize": { "x": 0, "y": 0, "w": 512, "h": 384 },
+      "sourceSize": { "w": 512, "h": 384 }
+    },
+    "symbol_10": {
+      "frame": { "x": 512, "y": 1152, "w": 512, "h": 384 },
+      "spriteSourceSize": { "x": 0, "y": 0, "w": 512, "h": 384 },
+      "sourceSize": { "w": 512, "h": 384 }
+    },
+    "symbol_11": {
+      "frame": { "x": 1024, "y": 1152, "w": 512, "h": 384 },
+      "spriteSourceSize": { "x": 0, "y": 0, "w": 512, "h": 384 },
+      "sourceSize": { "w": 512, "h": 384 }
+    }
+  },
+
+  "meta": {
+    "image": "spritesheet.png",
+    "size": { "w": 1536, "h": 1536 },
+    "scale": "1"
+  }
+}
