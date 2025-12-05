@@ -62,6 +62,7 @@ function hideMessage() {
 
 // --------------------------------------------------
 // Chargement manuel de spritesheet.png
+// (sans utiliser PIXI.BaseTexture.from)
 // --------------------------------------------------
 function loadSpritesheet() {
   return new Promise((resolve, reject) => {
@@ -70,7 +71,16 @@ function loadSpritesheet() {
 
     img.onload = () => {
       try {
-        const baseTexture = PIXI.BaseTexture.from(img);
+        // On crée une Texture à partir de l'image,
+        // puis on récupère sa baseTexture / source
+        const texture = PIXI.Texture.from(img);
+        const baseTexture = texture.baseTexture || texture.source;
+
+        if (!baseTexture) {
+          reject(new Error("baseTexture introuvable"));
+          return;
+        }
+
         resolve(baseTexture);
       } catch (e) {
         reject(e);
@@ -107,7 +117,6 @@ async function initPixi() {
   showMessage("Chargement…");
 
   try {
-    // 1) on charge l’image brute
     const baseTexture = await loadSpritesheet();
 
     const fullW = baseTexture.width;
