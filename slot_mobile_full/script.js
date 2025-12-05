@@ -22,6 +22,7 @@ Object.values(sounds).forEach((a) => {
   a.volume = 0.6;
 });
 
+// petit helper audio (évite les erreurs iOS)
 function playSound(name) {
   const s = sounds[name];
   if (!s) return;
@@ -29,7 +30,7 @@ function playSound(name) {
     s.currentTime = 0;
     s.play().catch(() => {});
   } catch (e) {
-    // iOS peut refuser, on ignore
+    // ignore
   }
 }
 
@@ -62,97 +63,12 @@ function hideMessage() {
   loaderEl.style.display = "none";
 }
 
-// Quand le message "Touchez pour lancer" est affiché,
-// on laisse l'overlay cliquable pour démarrer le jeu.
-function enableStartOverlay() {
-  if (!loaderEl) return;
-
-  const handler = (e) => {
-    e.preventDefault();
-    loaderEl.removeEventListener("click", handler);
-    loaderEl.removeEventListener("touchstart", handler);
-
-    hideMessage();
-
-    // On déclenche un premier spin "manuellement"
-    onSpinClick({
-      preventDefault() {}
-    });
-  };
-
-  loaderEl.addEventListener("click", handler);
-  loaderEl.addEventListener("touchstart", handler);
-}
-
 // --------------------------------------------------
-// Découper le PNG en 12 textures (3 x 4)
-// --------------------------------------------------
-function sliceSheetToTextures(baseTexture) {
-  const cols = 3; // 3 colonnes
-  const rows = 4; // 4 lignes
-
-  const tileW = baseTexture.width / cols;
-  const tileH = baseTexture.height / rows;
-
-  const textures = [];
-
-  for (let r = 0; r < rows; r++) {
-    for (let c = 0; c < cols; c++) {
-      const rect = new PIXI.Rectangle(
-        c * tileW,
-        r * tileH,
-        tileW,
-        tileH
-      );
-      const tex = new PIXI.Texture(baseTexture, rect);
-      textures.push(tex);
-    }
-  }
-
-  return textures;
-}
-
-// Charger le PNG selon la version de PIXI
-async function loadSymbolTextures() {
-  const imgPath = "assets/spritesheet.png";
-
-  // PIXI v7/v8 : Assets
-  if (PIXI.Assets && PIXI.Assets.load) {
-    const tex = await PIXI.Assets.load(imgPath);
-    const baseTexture = tex.baseTexture || tex;
-    return sliceSheetToTextures(baseTexture);
-  }
-
-  // PIXI v5/v6 : Loader
-  return new Promise((resolve, reject) => {
-    try {
-      const loader = new PIXI.Loader();
-      loader.add("symbolSheet", imgPath);
-      loader.load((_, resources) => {
-        const res = resources.symbolSheet;
-        if (!res || !res.texture) {
-          reject(new Error("Impossible de charger " + imgPath));
-          return;
-        }
-        const baseTexture = res.texture.baseTexture;
-        resolve(sliceSheetToTextures(baseTexture));
-      });
-      loader.onError.add((err) => {
-        reject(err || new Error("Erreur Loader PIXI"));
-      });
-    } catch (e) {
-      reject(e);
-    }
-  });
-}
-
-// --------------------------------------------------
-// Initialisation PIXI + assets
+// Initialisation PIXI + chargement des assets
 // --------------------------------------------------
 async function initPixi() {
   if (!canvas) {
     console.error("Canvas #game introuvable");
-    showMessage("Erreur JS : canvas introuvable");
     return;
   }
 
@@ -166,8 +82,10 @@ async function initPixi() {
   showMessage("Chargement…");
 
   try {
-    // on charge le PNG et on le découpe en 12 symboles
-    symbolTextures = await loadSymbolTextures();
+    // PIXI v8 : on utilise Assets
+    PIXI.Assets.add("symbols", "assets/spritesheet.json");
+    const sheet = await PIXI.Assets.load("symbols");
+    symbolTextures = Object.values(sheet.textures || {});
 
     if (!symbolTextures.length) {
       showMessage("Erreur JS : spritesheet vide");
@@ -175,14 +93,11 @@ async function initPixi() {
     }
 
     buildSlotScene();
-
-    // Première fois : on affiche l’overlay "Touchez pour lancer"
-    showMessage("Touchez pour lancer");
-    enableStartOverlay();
+    hideMessage();
+    showMessage("Touchez pour lancer"); // on réutilise comme overlay
   } catch (e) {
     console.error("Erreur chargement assets", e);
-    const msg = e && e.message ? e.message : "chargement assets";
-    showMessage("Erreur assets : " + msg);
+    showMessage("Erreur JS : chargement assets");
   }
 }
 
@@ -193,21 +108,19 @@ function buildSlotScene() {
   const w = app.renderer.width;
   const h = app.renderer.height;
 
-  // largeur d'une colonne (un rouleau)
-  const reelWidth = w * 0.16;            // un peu plus large qu'avant
+  const reelWidth = w * 0.13;
   const totalReelWidth = reelWidth * COLS;
 
-  // taille du symbole : NE DOIT PAS dépasser la largeur de la colonne
-  const maxSymbolFromHeight = (h * 0.5) / ROWS;   // 50% de la hauteur pour le slot
-  const maxSymbolFromWidth  = reelWidth * 0.9;    // 90% de la largeur colonne
-  const symbolSize = Math.min(maxSymbolFromHeight, maxSymbolFromWidth);
+  // ↓↓↓ Modif : symboles un peu plus petits pour ne plus être coupés
+  const symbolSize = (h * 0.45) / ROWS;
+  const spacing = 6; // petit espace vertical entre symboles
 
   const slotContainer = new PIXI.Container();
   app.stage.addChild(slotContainer);
 
-  // centrer le bloc de rouleaux
   slotContainer.x = (w - totalReelWidth) / 2;
-  slotContainer.y = h * 0.2;
+  // ↓↓↓ Modif : on remonte un peu la grille
+  slotContainer.y = h * 0.15;
 
   reels = [];
 
@@ -226,12 +139,10 @@ function buildSlotScene() {
       const texture = symbolTextures[idx];
       const sprite = new PIXI.Sprite(texture);
 
-      sprite.width  = symbolSize;
+      sprite.width = symbolSize;
       sprite.height = symbolSize;
-
-      // centrer le symbole dans la colonne
-      sprite.x = (reelWidth - symbolSize) / 2;
-      sprite.y = r * (symbolSize + 4);
+      sprite.x = 0;
+      sprite.y = r * (symbolSize + spacing);
 
       reelContainer.addChild(sprite);
       reel.symbols.push(sprite);
@@ -240,7 +151,7 @@ function buildSlotScene() {
     reels.push(reel);
   }
 
-  // clic / touch = spin
+  // clique sur tout l'écran = SPIN
   canvas.addEventListener("click", onSpinClick);
   canvas.addEventListener("touchstart", onSpinClick);
 }
@@ -276,7 +187,7 @@ function getTextureByIndex(index) {
 // Gestion du SPIN
 // --------------------------------------------------
 async function onSpinClick(e) {
-  if (e && e.preventDefault) e.preventDefault();
+  e.preventDefault();
 
   if (spinning) return;
   if (!app || !symbolTextures.length) return;
@@ -300,12 +211,13 @@ async function onSpinClick(e) {
 
     applyResultToReels(grid);
 
+    // petite pause pour laisser "le temps" d'afficher
     setTimeout(() => {
       finishSpin(win, bonus);
     }, 400);
   } catch (err) {
     console.error("Erreur API /spin", err);
-    showMessage("Erreur JS : API /spin");
+    showMessage("Erreur JS : API");
     spinning = false;
     playSound("stop");
   }
@@ -327,6 +239,15 @@ function finishSpin(win, bonus) {
   if (bonus && (bonus.freeSpins > 0 || bonus.multiplier > 1)) {
     playSound("bonus");
   }
+
+  // on affiche juste un petit texte dans le loader pour debug
+  if (loaderEl) {
+    if (lastWin > 0) {
+      loaderEl.textContent = `Gagné : ${lastWin}`;
+    } else {
+      loaderEl.textContent = "Touchez pour relancer";
+    }
+  }
 }
 
 // --------------------------------------------------
@@ -337,7 +258,6 @@ window.addEventListener("load", () => {
     initPixi();
   } catch (e) {
     console.error(e);
-    const msg = e && e.message ? e.message : "init";
-    showMessage("Erreur JS : " + msg);
+    showMessage("Erreur JS : init");
   }
 });
