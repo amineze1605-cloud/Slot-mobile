@@ -22,7 +22,6 @@ Object.values(sounds).forEach((a) => {
   a.volume = 0.6;
 });
 
-// petit helper audio (évite les erreurs iOS)
 function playSound(name) {
   const s = sounds[name];
   if (!s) return;
@@ -30,7 +29,7 @@ function playSound(name) {
     s.currentTime = 0;
     s.play().catch(() => {});
   } catch (e) {
-    // ignore
+    // iOS peut refuser, on ignore
   }
 }
 
@@ -64,11 +63,44 @@ function hideMessage() {
 }
 
 // --------------------------------------------------
-// Initialisation PIXI + chargement des assets
+// Chargement du spritesheet (compatible v5/v6/v7/v8)
+// --------------------------------------------------
+function loadSpritesheet() {
+  // Pixi v7 / v8 : PIXI.Assets
+  if (PIXI.Assets && PIXI.Assets.load) {
+    PIXI.Assets.add("symbols", "assets/spritesheet.json");
+    return PIXI.Assets.load("symbols");
+  }
+
+  // Anciennes versions : PIXI.Loader
+  return new Promise((resolve, reject) => {
+    try {
+      const loader = new PIXI.Loader();
+      loader.add("symbols", "assets/spritesheet.json");
+      loader.load((_, resources) => {
+        const res = resources.symbols;
+        if (!res || !res.spritesheet) {
+          reject(new Error("Spritesheet manquant dans resources.symbols"));
+          return;
+        }
+        resolve(res.spritesheet);
+      });
+      loader.onError.add((err) => {
+        reject(err || new Error("Erreur Loader PIXI"));
+      });
+    } catch (e) {
+      reject(e);
+    }
+  });
+}
+
+// --------------------------------------------------
+// Initialisation PIXI + assets
 // --------------------------------------------------
 async function initPixi() {
   if (!canvas) {
     console.error("Canvas #game introuvable");
+    showMessage("Erreur JS : canvas introuvable");
     return;
   }
 
@@ -82,9 +114,7 @@ async function initPixi() {
   showMessage("Chargement…");
 
   try {
-    // PIXI v8 : on utilise Assets
-    PIXI.Assets.add("symbols", "assets/spritesheet.json");
-    const sheet = await PIXI.Assets.load("symbols");
+    const sheet = await loadSpritesheet();
     symbolTextures = Object.values(sheet.textures || {});
 
     if (!symbolTextures.length) {
@@ -94,10 +124,11 @@ async function initPixi() {
 
     buildSlotScene();
     hideMessage();
-    showMessage("Touchez pour lancer"); // on réutilise comme overlay
+    showMessage("Touchez pour lancer");
   } catch (e) {
     console.error("Erreur chargement assets", e);
-    showMessage("Erreur JS : chargement assets");
+    const msg = e && e.message ? e.message : "chargement assets";
+    showMessage("Erreur assets : " + msg);
   }
 }
 
@@ -147,7 +178,7 @@ function buildSlotScene() {
     reels.push(reel);
   }
 
-  // clique sur tout l'écran = SPIN
+  // clique = SPIN
   canvas.addEventListener("click", onSpinClick);
   canvas.addEventListener("touchstart", onSpinClick);
 }
@@ -207,13 +238,12 @@ async function onSpinClick(e) {
 
     applyResultToReels(grid);
 
-    // petite pause pour laisser "le temps" d'afficher
     setTimeout(() => {
       finishSpin(win, bonus);
     }, 400);
   } catch (err) {
     console.error("Erreur API /spin", err);
-    showMessage("Erreur JS : API");
+    showMessage("Erreur JS : API /spin");
     spinning = false;
     playSound("stop");
   }
@@ -236,7 +266,6 @@ function finishSpin(win, bonus) {
     playSound("bonus");
   }
 
-  // on affiche juste un petit texte dans le loader pour debug
   if (loaderEl) {
     if (lastWin > 0) {
       loaderEl.textContent = `Gagné : ${lastWin}`;
@@ -254,6 +283,7 @@ window.addEventListener("load", () => {
     initPixi();
   } catch (e) {
     console.error(e);
-    showMessage("Erreur JS : init");
+    const msg = e && e.message ? e.message : "init";
+    showMessage("Erreur JS : " + msg);
   }
 });
