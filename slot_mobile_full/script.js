@@ -1,5 +1,5 @@
 // script.js
-// Frontend PIXI pour Slot Mobile
+// Frontend PIXI pour Slot Mobile (sans spritesheet.json)
 
 // --------------------------------------------------
 // Références DOM
@@ -22,16 +22,13 @@ Object.values(sounds).forEach((a) => {
   a.volume = 0.6;
 });
 
-// petit helper audio (évite les erreurs iOS)
 function playSound(name) {
   const s = sounds[name];
   if (!s) return;
   try {
     s.currentTime = 0;
     s.play().catch(() => {});
-  } catch (e) {
-    // ignore
-  }
+  } catch (e) {}
 }
 
 // --------------------------------------------------
@@ -64,17 +61,15 @@ function hideMessage() {
 }
 
 // --------------------------------------------------
-// Initialisation PIXI + chargement des assets
+// Initialisation PIXI + chargement de spritesheet.png
 // --------------------------------------------------
 async function initPixi() {
   if (!canvas) {
     console.error("Canvas #game introuvable");
     return;
   }
-
-  // Vérif version de PIXI
   if (!PIXI || !PIXI.Assets) {
-    console.error("PIXI.Assets indisponible. Version PIXI incorrecte ?");
+    console.error("PIXI.Assets indisponible");
     showMessage("Erreur JS : PIXI.Assets manquant");
     return;
   }
@@ -89,16 +84,37 @@ async function initPixi() {
   showMessage("Chargement…");
 
   try {
-    // 1) on enregistre la ressource
-    PIXI.Assets.add("symbols", "assets/spritesheet.json");
+    // 1) on charge l’image brute
+    const textureOrBase = await PIXI.Assets.load("assets/spritesheet.png");
+    const baseTexture = textureOrBase.baseTexture || textureOrBase;
 
-    // 2) on charge
-    const sheet = await PIXI.Assets.load("symbols");
+    const fullW = baseTexture.width;
+    const fullH = baseTexture.height;
 
-    // 3) on récupère les textures
-    symbolTextures = Object.values(sheet.textures || {});
+    console.log("spritesheet.png =", fullW, "x", fullH);
 
-    console.log("Textures chargées =", symbolTextures.length);
+    // 12 symboles = 3 colonnes x 4 lignes
+    const COLS_SHEET = 3;
+    const ROWS_SHEET = 4;
+    const frameW = fullW / COLS_SHEET;
+    const frameH = fullH / ROWS_SHEET;
+
+    symbolTextures = [];
+
+    for (let r = 0; r < ROWS_SHEET; r++) {
+      for (let c = 0; c < COLS_SHEET; c++) {
+        const rect = new PIXI.Rectangle(
+          c * frameW,
+          r * frameH,
+          frameW,
+          frameH
+        );
+        const tex = new PIXI.Texture(baseTexture, rect);
+        symbolTextures.push(tex);
+      }
+    }
+
+    console.log("Textures découpées :", symbolTextures.length);
 
     if (!symbolTextures.length) {
       showMessage("Erreur JS : spritesheet vide");
@@ -107,10 +123,9 @@ async function initPixi() {
 
     buildSlotScene();
     hideMessage();
-    showMessage("Touchez pour lancer"); // on réutilise comme overlay
+    showMessage("Touchez pour lancer");
   } catch (e) {
-    console.error("Erreur chargement assets", e);
-    // message un peu plus précis pour debug
+    console.error("Erreur chargement spritesheet.png", e);
     const msg = (e && e.message) ? e.message : String(e);
     showMessage("Erreur JS : chargement assets (" + msg + ")");
   }
@@ -123,7 +138,6 @@ function buildSlotScene() {
   const w = app.renderer.width;
   const h = app.renderer.height;
 
-  // taille des symboles (un peu plus gros mais tous visibles)
   const symbolSize = Math.min(w * 0.16, h * 0.16);
   const reelWidth = symbolSize + 8;
   const totalReelWidth = reelWidth * COLS;
@@ -163,7 +177,6 @@ function buildSlotScene() {
     reels.push(reel);
   }
 
-  // clique sur tout l'écran = SPIN
   canvas.addEventListener("click", onSpinClick);
   canvas.addEventListener("touchstart", onSpinClick);
 }
@@ -186,12 +199,11 @@ function applyResultToReels(grid) {
   }
 }
 
-// récupère une texture à partir de l’index du backend
 function getTextureByIndex(index) {
   if (!symbolTextures.length) {
     return PIXI.Texture.WHITE;
   }
-  const safeIndex = index % symbolTextures.length;
+  const safeIndex = index % symbolTextures.length; // 0..11
   return symbolTextures[safeIndex] || symbolTextures[0];
 }
 
@@ -223,7 +235,6 @@ async function onSpinClick(e) {
 
     applyResultToReels(grid);
 
-    // petite pause pour laisser "le temps" d'afficher
     setTimeout(() => {
       finishSpin(win, bonus);
     }, 400);
@@ -235,7 +246,9 @@ async function onSpinClick(e) {
   }
 }
 
-// fin de spin : mise à jour des valeurs + sons
+// --------------------------------------------------
+// Fin de spin
+// --------------------------------------------------
 function finishSpin(win, bonus) {
   spinning = false;
 
@@ -252,7 +265,6 @@ function finishSpin(win, bonus) {
     playSound("bonus");
   }
 
-  // on affiche juste un petit texte dans le loader pour debug
   if (loaderEl) {
     if (lastWin > 0) {
       loaderEl.textContent = `Gagné : ${lastWin}`;
