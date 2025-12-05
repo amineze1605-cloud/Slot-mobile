@@ -62,6 +62,28 @@ function hideMessage() {
   loaderEl.style.display = "none";
 }
 
+// Quand le message "Touchez pour lancer" est affiché,
+// on laisse l'overlay cliquable pour démarrer le jeu.
+function enableStartOverlay() {
+  if (!loaderEl) return;
+
+  const handler = (e) => {
+    e.preventDefault();
+    loaderEl.removeEventListener("click", handler);
+    loaderEl.removeEventListener("touchstart", handler);
+
+    hideMessage();
+
+    // On déclenche un premier spin "manuellement"
+    onSpinClick({
+      preventDefault() {}
+    });
+  };
+
+  loaderEl.addEventListener("click", handler);
+  loaderEl.addEventListener("touchstart", handler);
+}
+
 // --------------------------------------------------
 // Chargement du spritesheet (compatible v5/v6/v7/v8)
 // --------------------------------------------------
@@ -123,8 +145,10 @@ async function initPixi() {
     }
 
     buildSlotScene();
-    hideMessage();
+
+    // Première fois : on affiche l’overlay "Touchez pour lancer"
     showMessage("Touchez pour lancer");
+    enableStartOverlay();
   } catch (e) {
     console.error("Erreur chargement assets", e);
     const msg = e && e.message ? e.message : "chargement assets";
@@ -178,7 +202,7 @@ function buildSlotScene() {
     reels.push(reel);
   }
 
-  // clique = SPIN
+  // Pour les spins suivants, on clique directement sur le canvas
   canvas.addEventListener("click", onSpinClick);
   canvas.addEventListener("touchstart", onSpinClick);
 }
@@ -214,7 +238,7 @@ function getTextureByIndex(index) {
 // Gestion du SPIN
 // --------------------------------------------------
 async function onSpinClick(e) {
-  e.preventDefault();
+  if (e && e.preventDefault) e.preventDefault();
 
   if (spinning) return;
   if (!app || !symbolTextures.length) return;
@@ -266,13 +290,8 @@ function finishSpin(win, bonus) {
     playSound("bonus");
   }
 
-  if (loaderEl) {
-    if (lastWin > 0) {
-      loaderEl.textContent = `Gagné : ${lastWin}`;
-    } else {
-      loaderEl.textContent = "Touchez pour relancer";
-    }
-  }
+  // si tu veux, tu peux ré-utiliser le loader pour afficher le gain
+  // mais on ne le remet pas en plein écran pour ne pas cacher le jeu
 }
 
 // --------------------------------------------------
