@@ -148,9 +148,28 @@ async function initPixi() {
       return;
     }
 
+        // on construit la grille
     buildSlotScene();
+
+    // on cache complètement le loader HTML
     hideMessage();
-    showMessage("Touchez pour lancer");
+
+    // petit texte "Touchez pour lancer" directement dans la scène PIXI
+    const infoStyle = new PIXI.TextStyle({
+      fill: 0xffffff,
+      fontSize: 24,
+    });
+    const infoText = new PIXI.Text("Touchez pour lancer", infoStyle);
+    infoText.anchor.set(0.5);
+    infoText.x = app.renderer.width / 2;
+    infoText.y = app.renderer.height * 0.15;
+    app.stage.addChild(infoText);
+  } catch (e) {
+    console.error("Erreur chargement spritesheet.png", e);
+    const msg = (e && e.message) ? e.message : String(e);
+    showMessage("Erreur JS : chargement assets (" + msg + ")");
+  }
+}
   } catch (e) {
     console.error("Erreur chargement spritesheet.png", e);
     const msg = (e && e.message) ? e.message : String(e);
