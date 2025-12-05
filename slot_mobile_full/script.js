@@ -11,10 +11,10 @@ const loaderEl = document.getElementById("loader");
 // Audio
 // --------------------------------------------------
 const sounds = {
-  spin: new Audio("assets/audio/spin.wav"),
-  stop: new Audio("assets/audio/stop.wav"),
-  win: new Audio("assets/audio/win.wav"),
-  bonus: new Audio("assets/audio/bonus.wav"),
+  spin: new Audio("assets/audio/spin.mp3"),
+  stop: new Audio("assets/audio/stop.mp3"),
+  win: new Audio("assets/audio/win.mp3"),
+  bonus: new Audio("assets/audio/bonus.mp3"),
 };
 
 Object.values(sounds).forEach((a) => {
