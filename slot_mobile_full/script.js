@@ -1,5 +1,5 @@
 // script.js
-// Frontend PIXI pour Slot Mobile (sans spritesheet.json)
+// Frontend PIXI pour Slot Mobile (chargement manuel de spritesheet.png)
 
 // --------------------------------------------------
 // Références DOM
@@ -61,16 +61,39 @@ function hideMessage() {
 }
 
 // --------------------------------------------------
-// Initialisation PIXI + chargement de spritesheet.png
+// Chargement manuel de spritesheet.png
+// --------------------------------------------------
+function loadSpritesheet() {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.src = "assets/spritesheet.png";
+
+    img.onload = () => {
+      try {
+        const baseTexture = PIXI.BaseTexture.from(img);
+        resolve(baseTexture);
+      } catch (e) {
+        reject(e);
+      }
+    };
+
+    img.onerror = (e) => {
+      reject(e || new Error("Impossible de charger assets/spritesheet.png"));
+    };
+  });
+}
+
+// --------------------------------------------------
+// Initialisation PIXI + découpe de la spritesheet
 // --------------------------------------------------
 async function initPixi() {
   if (!canvas) {
     console.error("Canvas #game introuvable");
     return;
   }
-  if (!PIXI || !PIXI.Assets) {
-    console.error("PIXI.Assets indisponible");
-    showMessage("Erreur JS : PIXI.Assets manquant");
+  if (!window.PIXI) {
+    console.error("PIXI introuvable (CDN ?)");
+    showMessage("Erreur JS : PIXI introuvable");
     return;
   }
 
@@ -85,12 +108,10 @@ async function initPixi() {
 
   try {
     // 1) on charge l’image brute
-    const textureOrBase = await PIXI.Assets.load("assets/spritesheet.png");
-    const baseTexture = textureOrBase.baseTexture || textureOrBase;
+    const baseTexture = await loadSpritesheet();
 
     const fullW = baseTexture.width;
     const fullH = baseTexture.height;
-
     console.log("spritesheet.png =", fullW, "x", fullH);
 
     // 12 symboles = 3 colonnes x 4 lignes
