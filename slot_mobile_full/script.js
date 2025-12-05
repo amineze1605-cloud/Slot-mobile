@@ -34,8 +34,8 @@ function playSound(name) {
 // --------------------------------------------------
 // Variables de jeu
 // --------------------------------------------------
-let app;                // instance PIXI
-let symbolTextures = []; // textures découpées
+let app;
+let symbolTextures = [];
 let reels = [];
 
 const COLS = 5;
@@ -61,34 +61,26 @@ function hideMessage() {
 }
 
 // --------------------------------------------------
-// Chargement manuel de spritesheet.png
+// Chargement de spritesheet.png via PIXI.Texture
 // --------------------------------------------------
 function loadSpritesheet() {
   return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.src = "assets/spritesheet.png";
+    try {
+      const texture = PIXI.Texture.from("assets/spritesheet.png");
+      const baseTexture = texture.baseTexture;
 
-    img.onload = () => {
-      try {
-        // On crée une texture à partir de l'image,
-        // puis on récupère sa baseTexture
-        const texture = PIXI.Texture.from(img);
-        const baseTexture = texture.baseTexture || texture.source;
-
-        if (!baseTexture) {
-          reject(new Error("baseTexture introuvable"));
-          return;
-        }
-
+      if (baseTexture.valid) {
+        // déjà chargé
         resolve(baseTexture);
-      } catch (e) {
-        reject(e);
+      } else {
+        baseTexture.once("loaded", () => resolve(baseTexture));
+        baseTexture.once("error", (err) => {
+          reject(err || new Error("Erreur baseTexture spritesheet"));
+        });
       }
-    };
-
-    img.onerror = (e) => {
-      reject(e || new Error("Impossible de charger assets/spritesheet.png"));
-    };
+    } catch (e) {
+      reject(e);
+    }
   });
 }
 
@@ -106,7 +98,7 @@ async function initPixi() {
     return;
   }
 
-  // on crée l'app ici, avant le try/catch
+  // Création de l'app PIXI
   app = new PIXI.Application({
     view: canvas,
     resizeTo: window,
@@ -116,13 +108,15 @@ async function initPixi() {
 
   showMessage("Chargement…");
 
-    try {
+  try {
+    // 1) Charger spritesheet.png
     const baseTexture = await loadSpritesheet();
 
     const fullW = baseTexture.width;
     const fullH = baseTexture.height;
     console.log("spritesheet.png =", fullW, "x", fullH);
 
+    // 12 symboles = 3 colonnes x 4 lignes
     const COLS_SHEET = 3;
     const ROWS_SHEET = 4;
     const frameW = fullW / COLS_SHEET;
@@ -150,12 +144,14 @@ async function initPixi() {
       return;
     }
 
-    buildSlotScene(app);
-    hideMessage();          // ✅ on garde juste ça
-    // showMessage("Touchez pour lancer");  // ❌ à supprimer
+    // 2) Construire la scène
+    buildSlotScene();
+
+    // 3) Masquer le loader
+    hideMessage();
   } catch (e) {
     console.error("Erreur chargement spritesheet.png", e);
-    const msg = (e && e.message) ? e.message : String(e);
+    const msg = e && e.message ? e.message : String(e);
     showMessage("Erreur JS : chargement assets (" + msg + ")");
   }
 }
@@ -163,25 +159,21 @@ async function initPixi() {
 // --------------------------------------------------
 // Construction de la scène slot (5x3)
 // --------------------------------------------------
-function buildSlotScene(appInstance) {
-  // Sécurité : si l'app n'est pas prête
-  if (!appInstance || !appInstance.renderer) {
-    console.error("App PIXI non initialisée correctement", appInstance);
-    showMessage("Erreur JS : app non initialisée");
+function buildSlotScene() {
+  if (!app || !app.renderer) {
+    showMessage("Erreur JS : app PIXI manquante");
     return;
   }
 
-  // on essaye plusieurs façons de récupérer largeur/hauteur
-  const renderer = appInstance.renderer;
-  const w = renderer.width || (renderer.view && renderer.view.width) || window.innerWidth;
-  const h = renderer.height || (renderer.view && renderer.view.height) || window.innerHeight;
+  const w = app.renderer.width;
+  const h = app.renderer.height;
 
   const symbolSize = Math.min(w * 0.16, h * 0.16);
   const reelWidth = symbolSize + 8;
   const totalReelWidth = reelWidth * COLS;
 
   const slotContainer = new PIXI.Container();
-  appInstance.stage.addChild(slotContainer);
+  app.stage.addChild(slotContainer);
 
   slotContainer.x = (w - totalReelWidth) / 2;
   slotContainer.y = h * 0.25;
@@ -215,7 +207,7 @@ function buildSlotScene(appInstance) {
     reels.push(reel);
   }
 
-  // Gestion des clics pour lancer le spin
+  // Interactions : clique / touch = SPIN
   canvas.addEventListener("click", onSpinClick);
   canvas.addEventListener("touchstart", onSpinClick);
 }
@@ -310,6 +302,8 @@ function finishSpin(win, bonus) {
     } else {
       loaderEl.textContent = "Touchez pour relancer";
     }
+    // on laisse le loader caché (display:none),
+    // donc ce texte ne bloque pas l’écran.
   }
 }
 
@@ -321,7 +315,7 @@ window.addEventListener("load", () => {
     initPixi();
   } catch (e) {
     console.error(e);
-    const msg = (e && e.message) ? e.message : String(e);
+    const msg = e && e.message ? e.message : String(e);
     showMessage("Erreur JS : init (" + msg + ")");
   }
 });
