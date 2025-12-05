@@ -24,7 +24,6 @@
       color: #ffffff;
     }
 
-    /* Écran de chargement / start */
     #loader {
       position: fixed;
       inset: 0;
@@ -38,7 +37,6 @@
       padding: 0 16px;
     }
 
-    /* Canvas du jeu en plein écran */
     canvas#game {
       width: 100vw !important;
       height: 100vh !important;
@@ -47,13 +45,9 @@
   </style>
 </head>
 <body>
-  <!-- Message de chargement / erreurs -->
   <div id="loader">Chargement…</div>
-
-  <!-- Canvas PIXI -->
   <canvas id="game"></canvas>
 
-  <!-- Affichage des erreurs JS -->
   <script>
     window.addEventListener("error", function (e) {
       var loader = document.getElementById("loader");
@@ -63,7 +57,7 @@
     });
   </script>
 
-  <!-- Ton script de jeu (chargé UNE seule fois, après le canvas) -->
+  <!-- TON SCRIPT DE JEU (une seule fois, ici) -->
   <script src="script.js"></script>
 </body>
 </html>
