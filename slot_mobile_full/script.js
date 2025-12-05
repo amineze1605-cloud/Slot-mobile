@@ -40,6 +40,7 @@ let reels = [];
 
 const COLS = 5;
 const ROWS = 3;
+const SYMBOL_GAP = 8; // écart vertical/horizontal entre symboles
 
 let balance = 1000;
 let bet = 1;
@@ -50,9 +51,12 @@ let spinning = false;
 let slotContainer = null;
 let symbolSize = 0;
 
+// zone cliquable pour le spin (limité à la grille)
+let spinZone = null;
+
 // textes UI
-let infoText; // "Solde / Mise / Dernier gain"
-let uiMessage; // "Touchez pour lancer / relancer"
+let infoText;   // "Solde / Mise / Dernier gain"
+let uiMessage;  // "Touchez pour lancer / relancer"
 
 // --------------------------------------------------
 // Helpers UI
@@ -165,8 +169,7 @@ function buildSlotScene() {
   const h = app.renderer.height;
 
   symbolSize = Math.min(w * 0.16, h * 0.16);
-  const gap = 8;
-  const reelWidth = symbolSize + gap;
+  const reelWidth = symbolSize + SYMBOL_GAP;
   const totalReelWidth = reelWidth * COLS;
 
   slotContainer = new PIXI.Container();
@@ -195,7 +198,7 @@ function buildSlotScene() {
       sprite.width = symbolSize;
       sprite.height = symbolSize;
       sprite.x = 0;
-      sprite.y = r * (symbolSize + gap);
+      sprite.y = r * (symbolSize + SYMBOL_GAP);
 
       reelContainer.addChild(sprite);
       reel.symbols.push(sprite);
@@ -204,6 +207,17 @@ function buildSlotScene() {
     reels.push(reel);
   }
 
+  // zone cliquable pour le spin = rectangle autour de la grille
+  const gridWidth = COLS * (symbolSize + SYMBOL_GAP);
+  const gridHeight = ROWS * (symbolSize + SYMBOL_GAP);
+  spinZone = {
+    x: slotContainer.x,
+    y: slotContainer.y,
+    width: gridWidth,
+    height: gridHeight,
+  };
+
+  // écoute du SPIN sur tout le canvas, mais filtré par spinZone
   canvas.addEventListener("click", onSpinClick);
   canvas.addEventListener("touchstart", onSpinClick);
 }
@@ -235,7 +249,7 @@ function buildUI() {
   infoText.anchor.set(0.5, 0);
 
   const gridBottomY =
-    slotContainer.y + ROWS * (symbolSize + 8) - 8; // bas de la grille
+    slotContainer.y + ROWS * (symbolSize + SYMBOL_GAP) - SYMBOL_GAP;
   infoText.x = w / 2;
   infoText.y = gridBottomY + 16; // juste sous la grille
   app.stage.addChild(infoText);
@@ -322,6 +336,21 @@ function changeBet(delta) {
 }
 
 // --------------------------------------------------
+// Utilitaire : coordonnée du toucher dans le canvas
+// --------------------------------------------------
+function getPointerPosition(e) {
+  const touch = e.touches && e.touches[0] ? e.touches[0] : e;
+  if (!touch || !canvas || !app) return null;
+
+  const rect = canvas.getBoundingClientRect();
+  const xNorm = ((touch.clientX - rect.left) * app.renderer.width) / rect.width;
+  const yNorm =
+    ((touch.clientY - rect.top) * app.renderer.height) / rect.height;
+
+  return { x: xNorm, y: yNorm };
+}
+
+// --------------------------------------------------
 // Application de la grille renvoyée par le backend
 // --------------------------------------------------
 function applyResultToReels(grid) {
@@ -353,13 +382,27 @@ function getTextureByIndex(index) {
 async function onSpinClick(e) {
   e.preventDefault();
 
+  if (!spinZone || !app) return;
+
+  // on ne spin que si le toucher est dans la zone de la grille
+  const pos = getPointerPosition(e);
+  if (
+    !pos ||
+    pos.x < spinZone.x ||
+    pos.x > spinZone.x + spinZone.width ||
+    pos.y < spinZone.y ||
+    pos.y > spinZone.y + spinZone.height
+  ) {
+    // clic/touch en dehors de la grille -> on ignore
+    return;
+  }
+
   if (spinning) return;
-  if (!app || !symbolTextures.length) return;
+  if (!symbolTextures.length) return;
 
   spinning = true;
   lastWin = 0;
 
-  // On ne descend pas en dessous de zéro
   if (balance >= bet) {
     balance -= bet;
   }
