@@ -63,29 +63,30 @@ function hideMessage() {
 }
 
 // --------------------------------------------------
-// Chargement de spritesheet.png via PIXI.Texture
+// Chargement de spritesheet.png via <img> + BaseTexture
 // --------------------------------------------------
 function loadSpritesheet() {
   return new Promise(function (resolve, reject) {
-    try {
-      const texture = PIXI.Texture.from("assets/spritesheet.png");
-      const baseTexture = texture.baseTexture;
+    const img = new Image();
+    img.src = "assets/spritesheet.png";
 
-      if (baseTexture.valid) {
+    img.onload = function () {
+      try {
+        if (!PIXI.BaseTexture) {
+          reject(new Error("PIXI.BaseTexture manquant"));
+          return;
+        }
+        // compatible v5 : on crée la baseTexture à partir de l'image
+        const baseTexture = new PIXI.BaseTexture(img);
         resolve(baseTexture);
-        return;
+      } catch (e) {
+        reject(e);
       }
+    };
 
-      baseTexture.once("loaded", function () {
-        resolve(baseTexture);
-      });
-
-      baseTexture.once("error", function (err) {
-        reject(err || new Error("Erreur chargement spritesheet.png"));
-      });
-    } catch (e) {
-      reject(e);
-    }
+    img.onerror = function (e) {
+      reject(e || new Error("Impossible de charger assets/spritesheet.png"));
+    };
   });
 }
 
@@ -97,7 +98,7 @@ async function initPixi() {
     console.error("Canvas #game introuvable");
     return;
   }
-  if (!window.PIXI) {
+  if (!window.PIXI || !PIXI.Application) {
     console.error("PIXI introuvable");
     showMessage("Erreur JS : PIXI introuvable");
     return;
@@ -304,8 +305,6 @@ function finishSpin(win, bonus) {
   if (bonus && (bonus.freeSpins > 0 || bonus.multiplier > 1)) {
     playSound("bonus");
   }
-
-  // loaderEl reste caché, on l'utilise seulement pour les erreurs
 }
 
 // --------------------------------------------------
