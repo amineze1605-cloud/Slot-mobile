@@ -116,14 +116,13 @@ async function initPixi() {
 
   showMessage("Chargement…");
 
-  try {
+    try {
     const baseTexture = await loadSpritesheet();
 
     const fullW = baseTexture.width;
     const fullH = baseTexture.height;
     console.log("spritesheet.png =", fullW, "x", fullH);
 
-    // 12 symboles = 3 colonnes x 4 lignes
     const COLS_SHEET = 3;
     const ROWS_SHEET = 4;
     const frameW = fullW / COLS_SHEET;
@@ -151,9 +150,9 @@ async function initPixi() {
       return;
     }
 
-    // IMPORTANT : on passe l'app en argument
-       buildSlotScene(app);
-    hideMessage(); // on enlève complètement l’overlay
+    buildSlotScene(app);
+    hideMessage();          // ✅ on garde juste ça
+    // showMessage("Touchez pour lancer");  // ❌ à supprimer
   } catch (e) {
     console.error("Erreur chargement spritesheet.png", e);
     const msg = (e && e.message) ? e.message : String(e);
