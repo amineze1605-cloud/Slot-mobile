@@ -72,6 +72,13 @@ async function initPixi() {
     return;
   }
 
+  // Vérif version de PIXI
+  if (!PIXI || !PIXI.Assets) {
+    console.error("PIXI.Assets indisponible. Version PIXI incorrecte ?");
+    showMessage("Erreur JS : PIXI.Assets manquant");
+    return;
+  }
+
   app = new PIXI.Application({
     view: canvas,
     resizeTo: window,
@@ -82,10 +89,16 @@ async function initPixi() {
   showMessage("Chargement…");
 
   try {
-    // PIXI v8 : on utilise Assets
+    // 1) on enregistre la ressource
     PIXI.Assets.add("symbols", "assets/spritesheet.json");
+
+    // 2) on charge
     const sheet = await PIXI.Assets.load("symbols");
+
+    // 3) on récupère les textures
     symbolTextures = Object.values(sheet.textures || {});
+
+    console.log("Textures chargées =", symbolTextures.length);
 
     if (!symbolTextures.length) {
       showMessage("Erreur JS : spritesheet vide");
@@ -97,7 +110,9 @@ async function initPixi() {
     showMessage("Touchez pour lancer"); // on réutilise comme overlay
   } catch (e) {
     console.error("Erreur chargement assets", e);
-    showMessage("Erreur JS : chargement assets");
+    // message un peu plus précis pour debug
+    const msg = (e && e.message) ? e.message : String(e);
+    showMessage("Erreur JS : chargement assets (" + msg + ")");
   }
 }
 
@@ -108,19 +123,16 @@ function buildSlotScene() {
   const w = app.renderer.width;
   const h = app.renderer.height;
 
-  const reelWidth = w * 0.13;
+  // taille des symboles (un peu plus gros mais tous visibles)
+  const symbolSize = Math.min(w * 0.16, h * 0.16);
+  const reelWidth = symbolSize + 8;
   const totalReelWidth = reelWidth * COLS;
-
-  // ↓↓↓ Modif : symboles un peu plus petits pour ne plus être coupés
-  const symbolSize = (h * 0.45) / ROWS;
-  const spacing = 6; // petit espace vertical entre symboles
 
   const slotContainer = new PIXI.Container();
   app.stage.addChild(slotContainer);
 
   slotContainer.x = (w - totalReelWidth) / 2;
-  // ↓↓↓ Modif : on remonte un peu la grille
-  slotContainer.y = h * 0.15;
+  slotContainer.y = h * 0.25;
 
   reels = [];
 
@@ -142,7 +154,7 @@ function buildSlotScene() {
       sprite.width = symbolSize;
       sprite.height = symbolSize;
       sprite.x = 0;
-      sprite.y = r * (symbolSize + spacing);
+      sprite.y = r * (symbolSize + 8);
 
       reelContainer.addChild(sprite);
       reel.symbols.push(sprite);
@@ -258,6 +270,7 @@ window.addEventListener("load", () => {
     initPixi();
   } catch (e) {
     console.error(e);
-    showMessage("Erreur JS : init");
+    const msg = (e && e.message) ? e.message : String(e);
+    showMessage("Erreur JS : init (" + msg + ")");
   }
 });
