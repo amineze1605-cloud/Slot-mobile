@@ -152,9 +152,8 @@ async function initPixi() {
     }
 
     // IMPORTANT : on passe l'app en argument
-    buildSlotScene(app);
-    hideMessage();
-    showMessage("Touchez pour lancer");
+       buildSlotScene(app);
+    hideMessage(); // on enlève complètement l’overlay
   } catch (e) {
     console.error("Erreur chargement spritesheet.png", e);
     const msg = (e && e.message) ? e.message : String(e);
