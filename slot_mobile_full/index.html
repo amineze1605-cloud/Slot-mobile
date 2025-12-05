@@ -8,8 +8,8 @@
   />
   <title>Slot Mobile</title>
 
-  <!-- PIXI.JS : version 6.5.8 (compatible BaseTexture.from) -->
-  <script src="https://pixijs.download/v6.5.8/pixi.min.js"></script>
+  <!-- PIXI.JS -->
+  <script src="https://pixijs.download/release/pixi.min.js"></script>
 
   <style>
     html,
@@ -24,6 +24,7 @@
       color: #ffffff;
     }
 
+    /* Écran de chargement / erreurs */
     #loader {
       position: fixed;
       inset: 0;
@@ -48,7 +49,7 @@
   <div id="loader">Chargement…</div>
   <canvas id="game"></canvas>
 
-  <!-- Affiche les erreurs JS à l’écran -->
+  <!-- Affichage des erreurs JS en plein écran -->
   <script>
     window.addEventListener("error", function (e) {
       var loader = document.getElementById("loader");
@@ -59,7 +60,7 @@
     });
   </script>
 
-  <!-- Ton script de jeu (UNE SEULE FOIS) -->
+  <!-- Ton jeu -->
   <script src="script.js"></script>
 </body>
 </html>
