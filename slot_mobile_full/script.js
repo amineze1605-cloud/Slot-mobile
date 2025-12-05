@@ -1,5 +1,5 @@
 // script.js
-// Slot mobile avec spritesheet PNG, animation simple, boutons de mise et feedback de gain
+// Slot mobile avec spritesheet.png (12 symboles), UI mise + solde
 
 // --------------------------------------------------
 // Références DOM
@@ -28,7 +28,7 @@ function playSound(name) {
   try {
     s.currentTime = 0;
     s.play().catch(() => {});
-  } catch (_) {}
+  } catch (e) {}
 }
 
 // --------------------------------------------------
@@ -41,26 +41,18 @@ let reels = [];
 const COLS = 5;
 const ROWS = 3;
 
-const MIN_BET = 1;
-const MAX_BET = 10;
-
 let balance = 1000;
 let bet = 1;
 let lastWin = 0;
 let spinning = false;
 
-// UI PIXI
-let slotContainer;
-let statusText;
-let uiContainer;
-let balanceText;
-let betText;
-let lastWinText;
-let minusButton;
-let plusButton;
+// pour placer la UI correctement
+let slotContainer = null;
+let symbolSize = 0;
 
-// animation "shuffle"
-let shuffleFn = null;
+// textes UI
+let infoText; // "Solde / Mise / Dernier gain"
+let uiMessage; // "Touchez pour lancer / relancer"
 
 // --------------------------------------------------
 // Helpers UI
@@ -76,23 +68,6 @@ function hideMessage() {
   loaderEl.style.display = "none";
 }
 
-function setStatus(text) {
-  if (statusText) {
-    statusText.text = text;
-  }
-}
-
-function updateInfoTexts() {
-  if (!balanceText || !betText || !lastWinText) return;
-  balanceText.text = `Solde : ${balance}`;
-  betText.text = `Mise : ${bet}`;
-  lastWinText.text = `Dernier gain : ${lastWin}`;
-}
-
-function wait(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 // --------------------------------------------------
 // Chargement manuel de spritesheet.png
 // --------------------------------------------------
@@ -104,11 +79,7 @@ function loadSpritesheet() {
     img.onload = () => {
       try {
         const baseTexture = PIXI.BaseTexture.from(img);
-        resolve({
-          baseTexture,
-          width: img.width,
-          height: img.height,
-        });
+        resolve(baseTexture);
       } catch (e) {
         reject(e);
       }
@@ -144,8 +115,10 @@ async function initPixi() {
   showMessage("Chargement…");
 
   try {
-    const { baseTexture, width: fullW, height: fullH } = await loadSpritesheet();
-    console.log("spritesheet.png =", fullW, "x", fullH);
+    const baseTexture = await loadSpritesheet();
+
+    const fullW = baseTexture.width;
+    const fullH = baseTexture.height;
 
     // 12 symboles = 3 colonnes x 4 lignes
     const COLS_SHEET = 3;
@@ -168,16 +141,15 @@ async function initPixi() {
       }
     }
 
-    console.log("Textures découpées :", symbolTextures.length);
-
     if (!symbolTextures.length) {
       showMessage("Erreur JS : spritesheet vide");
       return;
     }
 
     buildSlotScene();
+    buildUI();
     hideMessage();
-    setStatus("Touchez pour lancer");
+    setMessage("Touchez pour lancer");
   } catch (e) {
     console.error("Erreur chargement spritesheet.png", e);
     const msg = e && e.message ? e.message : String(e);
@@ -186,22 +158,22 @@ async function initPixi() {
 }
 
 // --------------------------------------------------
-// Construction de la scène slot (5x3) + UI
+// Construction de la scène slot (5x3)
 // --------------------------------------------------
 function buildSlotScene() {
   const w = app.renderer.width;
   const h = app.renderer.height;
 
-  const symbolSize = Math.min(w * 0.16, h * 0.16);
-  const reelWidth = symbolSize + 8;
+  symbolSize = Math.min(w * 0.16, h * 0.16);
+  const gap = 8;
+  const reelWidth = symbolSize + gap;
   const totalReelWidth = reelWidth * COLS;
 
-  // Conteneur des rouleaux
   slotContainer = new PIXI.Container();
   app.stage.addChild(slotContainer);
 
   slotContainer.x = (w - totalReelWidth) / 2;
-  slotContainer.y = h * 0.25;
+  slotContainer.y = h * 0.28; // un peu plus haut pour laisser de la place dessous
 
   reels = [];
 
@@ -223,7 +195,7 @@ function buildSlotScene() {
       sprite.width = symbolSize;
       sprite.height = symbolSize;
       sprite.x = 0;
-      sprite.y = r * (symbolSize + 8);
+      sprite.y = r * (symbolSize + gap);
 
       reelContainer.addChild(sprite);
       reel.symbols.push(sprite);
@@ -232,165 +204,121 @@ function buildSlotScene() {
     reels.push(reel);
   }
 
-  // Texte de statut (instruction / gain)
-  const statusStyle = new PIXI.TextStyle({
+  canvas.addEventListener("click", onSpinClick);
+  canvas.addEventListener("touchstart", onSpinClick);
+}
+
+// --------------------------------------------------
+// UI : message haut + ligne infos + boutons +/- mise
+// --------------------------------------------------
+function buildUI() {
+  const w = app.renderer.width;
+  const h = app.renderer.height;
+
+  // ----- Message haut ("Touchez pour lancer")
+  const msgStyle = new PIXI.TextStyle({
     fill: 0xffffff,
     fontSize: 28,
-    fontWeight: "bold",
-    dropShadow: true,
-    dropShadowDistance: 2,
-    dropShadowColor: 0x000000,
   });
+  uiMessage = new PIXI.Text("", msgStyle);
+  uiMessage.anchor.set(0.5, 0);
+  uiMessage.x = w / 2;
+  uiMessage.y = h * 0.12;
+  app.stage.addChild(uiMessage);
 
-  statusText = new PIXI.Text("Touchez pour lancer", statusStyle);
-  statusText.anchor.set(0.5, 0.5);
-  statusText.x = w / 2;
-  statusText.y = h * 0.15;
-  app.stage.addChild(statusText);
-
-  // UI bas (solde, mise, dernier gain + boutons)
-  uiContainer = new PIXI.Container();
-  app.stage.addChild(uiContainer);
-
+  // ----- Ligne infos (solde / mise / gain)
   const infoStyle = new PIXI.TextStyle({
     fill: 0xffffff,
     fontSize: 18,
   });
+  infoText = new PIXI.Text("", infoStyle);
+  infoText.anchor.set(0.5, 0);
 
-  balanceText = new PIXI.Text("", infoStyle);
-  betText = new PIXI.Text("", infoStyle);
-  lastWinText = new PIXI.Text("", infoStyle);
+  const gridBottomY =
+    slotContainer.y + ROWS * (symbolSize + 8) - 8; // bas de la grille
+  infoText.x = w / 2;
+  infoText.y = gridBottomY + 16; // juste sous la grille
+  app.stage.addChild(infoText);
 
-  balanceText.anchor.set(0, 0.5);
-  betText.anchor.set(0.5, 0.5);
-  lastWinText.anchor.set(1, 0.5);
+  // ----- Boutons -1 / +1 pour la mise
+  const btnY = infoText.y + 50; // sous la ligne d'info
+  const btnWidth = 90;
+  const btnHeight = 50;
+  const btnSpacing = 140;
 
-  const infoY = h - 30;
-
-  balanceText.position.set(16, infoY);
-  betText.position.set(w / 2, infoY);
-  lastWinText.position.set(w - 16, infoY);
-
-  uiContainer.addChild(balanceText, betText, lastWinText);
-
-  // Boutons de mise +/- au-dessus de la barre d'info
-  const buttonY = h * 0.72;
-  const buttonSpacing = 90;
-
-  minusButton = createButton("-1", w / 2 - buttonSpacing, buttonY, () => {
-    changeBet(-1);
-  });
-
-  plusButton = createButton("+1", w / 2 + buttonSpacing, buttonY, () => {
-    changeBet(1);
-  });
-
-  uiContainer.addChild(minusButton, plusButton);
-
-  updateInfoTexts();
-
-  // Clic sur tout le stage = SPIN (sauf boutons qui stopPropagation)
-  app.stage.interactive = true;
-  app.stage.on("pointertap", onSpinClick);
-}
-
-// --------------------------------------------------
-// Création d'un bouton simple PIXI
-// --------------------------------------------------
-function createButton(label, x, y, onClick) {
-  const container = new PIXI.Container();
-
-  const bg = new PIXI.Graphics();
-  const width = 70;
-  const height = 36;
-  const radius = 8;
-
-  bg.beginFill(0x222638);
-  bg.drawRoundedRect(-width / 2, -height / 2, width, height, radius);
-  bg.endFill();
-
-  const border = new PIXI.Graphics();
-  border.lineStyle(2, 0xf6c14b);
-  border.drawRoundedRect(-width / 2, -height / 2, width, height, radius);
-
-  const txtStyle = new PIXI.TextStyle({
+  const styleLabel = new PIXI.TextStyle({
     fill: 0xffffff,
-    fontSize: 18,
-    fontWeight: "bold",
+    fontSize: 22,
   });
 
-  const txt = new PIXI.Text(label, txtStyle);
-  txt.anchor.set(0.5, 0.5);
+  // bouton -1
+  const btnMinus = new PIXI.Container();
+  const gMinus = new PIXI.Graphics();
+  gMinus.lineStyle(2, 0xf5c744);
+  gMinus.beginFill(0x151922);
+  gMinus.drawRoundedRect(-btnWidth / 2, -btnHeight / 2, btnWidth, btnHeight, 10);
+  gMinus.endFill();
+  btnMinus.addChild(gMinus);
 
-  container.addChild(bg, border, txt);
-  container.position.set(x, y);
-  container.interactive = true;
-  container.buttonMode = true;
+  const labelMinus = new PIXI.Text("-1", styleLabel);
+  labelMinus.anchor.set(0.5);
+  btnMinus.addChild(labelMinus);
 
-  container.on("pointertap", (e) => {
-    e.stopPropagation(); // évite de déclencher le spin
-    if (onClick) onClick();
-  });
+  btnMinus.x = w / 2 - btnSpacing / 2;
+  btnMinus.y = btnY;
+  btnMinus.interactive = true;
+  btnMinus.buttonMode = true;
+  btnMinus.on("pointertap", () => changeBet(-1));
 
-  return container;
+  app.stage.addChild(btnMinus);
+
+  // bouton +1
+  const btnPlus = new PIXI.Container();
+  const gPlus = new PIXI.Graphics();
+  gPlus.lineStyle(2, 0xf5c744);
+  gPlus.beginFill(0x151922);
+  gPlus.drawRoundedRect(-btnWidth / 2, -btnHeight / 2, btnWidth, btnHeight, 10);
+  gPlus.endFill();
+  btnPlus.addChild(gPlus);
+
+  const labelPlus = new PIXI.Text("+1", styleLabel);
+  labelPlus.anchor.set(0.5);
+  btnPlus.addChild(labelPlus);
+
+  btnPlus.x = w / 2 + btnSpacing / 2;
+  btnPlus.y = btnY;
+  btnPlus.interactive = true;
+  btnPlus.buttonMode = true;
+  btnPlus.on("pointertap", () => changeBet(1));
+
+  app.stage.addChild(btnPlus);
+
+  // init texte
+  updateInfoText();
 }
 
+function setMessage(text) {
+  if (!uiMessage) return;
+  uiMessage.text = text;
+}
+
+function updateInfoText() {
+  if (!infoText) return;
+  infoText.text =
+    "Solde : " +
+    balance +
+    "   |   Mise : " +
+    bet +
+    "   |   Dernier gain : " +
+    lastWin;
+}
+
+// changement de mise
 function changeBet(delta) {
-  bet += delta;
-  if (bet < MIN_BET) bet = MIN_BET;
-  if (bet > MAX_BET) bet = MAX_BET;
-
-  // Option : ne pas dépasser le solde
-  if (bet > balance) bet = balance > 0 ? balance : MIN_BET;
-
-  updateInfoTexts();
-}
-
-// --------------------------------------------------
-// Animation "shuffle" pendant le spin
-// --------------------------------------------------
-function startShuffleAnimation() {
-  if (!app || !symbolTextures.length) return;
-  if (shuffleFn) return;
-
-  shuffleFn = () => {
-    for (const reel of reels) {
-      for (const sprite of reel.symbols) {
-        const idx = Math.floor(Math.random() * symbolTextures.length);
-        sprite.texture = symbolTextures[idx];
-      }
-    }
-  };
-
-  app.ticker.add(shuffleFn);
-}
-
-function stopShuffleAnimation() {
-  if (!app || !shuffleFn) return;
-  app.ticker.remove(shuffleFn);
-  shuffleFn = null;
-}
-
-// petit flash quand il y a un gain
-function flashWin() {
-  if (!app) return;
-
-  const g = new PIXI.Graphics();
-  g.beginFill(0xffffff, 0.35);
-  g.drawRect(0, 0, app.renderer.width, app.renderer.height);
-  g.endFill();
-  app.stage.addChild(g);
-
-  const fadeFn = (delta) => {
-    g.alpha -= 0.08 * (delta || 1);
-    if (g.alpha <= 0) {
-      app.ticker.remove(fadeFn);
-      app.stage.removeChild(g);
-      g.destroy();
-    }
-  };
-
-  app.ticker.add(fadeFn);
+  const newBet = bet + delta;
+  if (newBet < 1) return;
+  bet = newBet;
+  updateInfoText();
 }
 
 // --------------------------------------------------
@@ -423,55 +351,46 @@ function getTextureByIndex(index) {
 // Gestion du SPIN
 // --------------------------------------------------
 async function onSpinClick(e) {
-  if (e && e.data && e.data.originalEvent && e.data.originalEvent.preventDefault) {
-    e.data.originalEvent.preventDefault();
-  }
+  e.preventDefault();
 
   if (spinning) return;
   if (!app || !symbolTextures.length) return;
 
-  if (balance < bet || bet <= 0) {
-    setStatus("Solde insuffisant");
-    playSound("stop");
-    return;
-  }
-
   spinning = true;
   lastWin = 0;
-  balance -= bet;
-  updateInfoTexts();
-  setStatus("Lancement…");
+
+  // On ne descend pas en dessous de zéro
+  if (balance >= bet) {
+    balance -= bet;
+  }
+
+  updateInfoText();
+  setMessage("Spin en cours…");
   playSound("spin");
 
-  startShuffleAnimation();
-
-  let data;
   try {
     const response = await fetch("/spin", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ bet }),
     });
-    data = await response.json();
+
+    const data = await response.json();
+    const grid = data.result || [];
+    const win = data.win || 0;
+    const bonus = data.bonus || { freeSpins: 0, multiplier: 1 };
+
+    applyResultToReels(grid);
+
+    setTimeout(() => {
+      finishSpin(win, bonus);
+    }, 400);
   } catch (err) {
     console.error("Erreur API /spin", err);
-    stopShuffleAnimation();
+    showMessage("Erreur JS : API");
     spinning = false;
-    setStatus("Erreur réseau, réessayez");
     playSound("stop");
-    return;
   }
-
-  const grid = data && data.result ? data.result : [];
-  const win = data && data.win ? data.win : 0;
-  const bonus = data && data.bonus ? data.bonus : { freeSpins: 0, multiplier: 1 };
-
-  // laisse tourner au minimum un peu
-  await wait(600);
-
-  stopShuffleAnimation();
-  applyResultToReels(grid);
-  finishSpin(win, bonus);
 }
 
 // --------------------------------------------------
@@ -482,22 +401,19 @@ function finishSpin(win, bonus) {
 
   lastWin = win || 0;
   balance += lastWin;
-  updateInfoTexts();
 
   if (lastWin > 0) {
-    setStatus(`Gagné : ${lastWin}`);
     playSound("win");
-    flashWin();
   } else {
-    setStatus("Touchez pour relancer");
     playSound("stop");
   }
 
   if (bonus && (bonus.freeSpins > 0 || bonus.multiplier > 1)) {
     playSound("bonus");
-    // Tu peux personnaliser le message bonus ici si tu veux
-    // setStatus(`BONUS ! +${bonus.freeSpins} tours x${bonus.multiplier}`);
   }
+
+  updateInfoText();
+  setMessage("Touchez pour relancer");
 }
 
 // --------------------------------------------------
