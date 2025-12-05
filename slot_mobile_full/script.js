@@ -1,5 +1,5 @@
 // script.js
-// Frontend PIXI pour Slot Mobile (chargement manuel de spritesheet.png)
+// Frontend PIXI pour Slot Mobile (spritesheet.png 3x4 = 12 symboles)
 
 // --------------------------------------------------
 // Références DOM
@@ -61,26 +61,25 @@ function hideMessage() {
 }
 
 // --------------------------------------------------
-// Chargement de spritesheet.png via PIXI.Texture
+// Chargement manuel de spritesheet.png avec BaseTexture.from
 // --------------------------------------------------
 function loadSpritesheet() {
   return new Promise((resolve, reject) => {
-    try {
-      const texture = PIXI.Texture.from("assets/spritesheet.png");
-      const baseTexture = texture.baseTexture;
+    const img = new Image();
+    img.src = "assets/spritesheet.png";
 
-      if (baseTexture.valid) {
-        // déjà chargé
+    img.onload = () => {
+      try {
+        const baseTexture = PIXI.BaseTexture.from(img);
         resolve(baseTexture);
-      } else {
-        baseTexture.once("loaded", () => resolve(baseTexture));
-        baseTexture.once("error", (err) => {
-          reject(err || new Error("Erreur baseTexture spritesheet"));
-        });
+      } catch (e) {
+        reject(e);
       }
-    } catch (e) {
-      reject(e);
-    }
+    };
+
+    img.onerror = (e) => {
+      reject(e || new Error("Impossible de charger assets/spritesheet.png"));
+    };
   });
 }
 
@@ -93,12 +92,11 @@ async function initPixi() {
     return;
   }
   if (!window.PIXI) {
-    console.error("PIXI introuvable (CDN ?)");
+    console.error("PIXI introuvable");
     showMessage("Erreur JS : PIXI introuvable");
     return;
   }
 
-  // Création de l'app PIXI
   app = new PIXI.Application({
     view: canvas,
     resizeTo: window,
@@ -109,7 +107,6 @@ async function initPixi() {
   showMessage("Chargement…");
 
   try {
-    // 1) Charger spritesheet.png
     const baseTexture = await loadSpritesheet();
 
     const fullW = baseTexture.width;
@@ -144,11 +141,8 @@ async function initPixi() {
       return;
     }
 
-    // 2) Construire la scène
     buildSlotScene();
-
-    // 3) Masquer le loader
-    hideMessage();
+    hideMessage(); // on enlève le texte, on laisse juste la grille
   } catch (e) {
     console.error("Erreur chargement spritesheet.png", e);
     const msg = e && e.message ? e.message : String(e);
@@ -168,6 +162,7 @@ function buildSlotScene() {
   const w = app.renderer.width;
   const h = app.renderer.height;
 
+  // Taille + espacement des symboles
   const symbolSize = Math.min(w * 0.16, h * 0.16);
   const reelWidth = symbolSize + 8;
   const totalReelWidth = reelWidth * COLS;
@@ -176,7 +171,7 @@ function buildSlotScene() {
   app.stage.addChild(slotContainer);
 
   slotContainer.x = (w - totalReelWidth) / 2;
-  slotContainer.y = h * 0.25;
+  slotContainer.y = h * 0.25; // grille un peu remontée
 
   reels = [];
 
@@ -207,7 +202,6 @@ function buildSlotScene() {
     reels.push(reel);
   }
 
-  // Interactions : clique / touch = SPIN
   canvas.addEventListener("click", onSpinClick);
   canvas.addEventListener("touchstart", onSpinClick);
 }
@@ -296,15 +290,8 @@ function finishSpin(win, bonus) {
     playSound("bonus");
   }
 
-  if (loaderEl) {
-    if (lastWin > 0) {
-      loaderEl.textContent = `Gagné : ${lastWin}`;
-    } else {
-      loaderEl.textContent = "Touchez pour relancer";
-    }
-    // on laisse le loader caché (display:none),
-    // donc ce texte ne bloque pas l’écran.
-  }
+  // On n'affiche plus le loader par-dessus,
+  // donc pas de texte ici pour ne pas gêner l'écran.
 }
 
 // --------------------------------------------------
