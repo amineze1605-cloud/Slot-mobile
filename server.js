@@ -51,18 +51,44 @@ function evaluate(grid, bet) {
 }
 
 // Endpoint SPIN
+// Route /spin très légère pour tests frontend
 app.post("/spin", (req, res) => {
-    const { bet = 1 } = req.body || {};
-    const b = Number(bet) > 0 ? Number(bet) : 1;
+  const body = req.body || {};
+  const bet = Number(body.bet) > 0 ? Number(body.bet) : 1;
 
-    const grid = generateGrid();
-    const evalRes = evaluate(grid, b);
+  const ROWS = 3;
+  const COLS = 5;
+  const SYMBOLS = 12; // 0..11 = les 12 symboles de ta spritesheet
 
-    res.json({
-        result: grid,
-        win: evalRes.win,
-        bonus: evalRes.bonus
-    });
+  // --- grille aléatoire légère
+  const grid = [];
+  for (let r = 0; r < ROWS; r++) {
+    const row = [];
+    for (let c = 0; c < COLS; c++) {
+      row.push(Math.floor(Math.random() * SYMBOLS));
+    }
+    grid.push(row);
+  }
+
+  // --- petit calcul de gain simple :
+  // si la ligne du milieu a 5 symboles identiques -> gain 10x la mise
+  let win = 0;
+  const mid = 1;
+  const firstSym = grid[mid][0];
+  let allSame = true;
+  for (let c = 1; c < COLS; c++) {
+    if (grid[mid][c] !== firstSym) {
+      allSame = false;
+      break;
+    }
+  }
+  if (allSame) {
+    win = bet * 10;
+  }
+
+  const bonus = { freeSpins: 0, multiplier: 1 };
+
+  res.json({ result: grid, win, bonus });
 });
 
 // ----------------------------
