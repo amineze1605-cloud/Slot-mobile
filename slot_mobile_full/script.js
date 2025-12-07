@@ -89,7 +89,7 @@ function loadSpritesheet() {
 
     img.onload = () => {
       try {
-        // PIXI v5 : on passe par Texture.from pour récupérer baseTexture
+        // PIXI v5 : Texture.from => baseTexture
         const texture = PIXI.Texture.from(img);
         const baseTexture = texture.baseTexture;
         resolve(baseTexture);
@@ -181,18 +181,39 @@ function buildSlotScene() {
   const symbolSize = Math.min(w * 0.16, h * 0.16);
   const reelWidth = symbolSize + 8;
   const totalReelWidth = reelWidth * COLS;
+  const visibleHeight = ROWS * (symbolSize + 8) - 8;
 
   const slotContainer = new PIXI.Container();
   slotContainer.name = "slotContainer";
+  slotContainer.sortableChildren = true;
   app.stage.addChild(slotContainer);
 
   slotContainer.x = (w - totalReelWidth) / 2;
-  slotContainer.y = h * 0.22;
+  slotContainer.y = h * 0.24;
+
+  // Cadre de la grille – fond sombre + bord doré
+  const paddingX = symbolSize * 0.35;
+  const paddingY = symbolSize * 0.35;
+
+  const frame = new PIXI.Graphics();
+  frame.beginFill(0x111623);
+  frame.lineStyle(4, 0xf6c144, 0.85);
+  frame.drawRoundedRect(
+    -paddingX,
+    -paddingY,
+    totalReelWidth + paddingX * 2,
+    visibleHeight + paddingY * 2,
+    22
+  );
+  frame.endFill();
+  frame.zIndex = 0;
+  slotContainer.addChild(frame);
 
   reels = [];
 
   for (let c = 0; c < COLS; c++) {
     const reelContainer = new PIXI.Container();
+    reelContainer.zIndex = 1;
     slotContainer.addChild(reelContainer);
     reelContainer.x = c * reelWidth;
 
@@ -206,9 +227,10 @@ function buildSlotScene() {
       const texture = symbolTextures[idx];
       const sprite = new PIXI.Sprite(texture);
 
-      sprite.width = symbolSize;
-      sprite.height = symbolSize;
-      sprite.x = 0;
+      // mise à l’échelle en gardant le ratio
+      const scale = symbolSize / Math.max(texture.width, texture.height);
+      sprite.scale.set(scale);
+      sprite.x = (reelWidth - symbolSize) / 2;
       sprite.y = r * (symbolSize + 8);
 
       reelContainer.addChild(sprite);
@@ -231,13 +253,13 @@ function buildUi() {
     "",
     new PIXI.TextStyle({
       fill: 0xffffff,
-      fontSize: Math.round(h * 0.035), // un peu plus petit
+      fontSize: Math.round(h * 0.035),
       fontWeight: "bold",
     })
   );
   messageText.anchor.set(0.5, 0.5);
   messageText.x = w / 2;
-  messageText.y = h * 0.12;
+  messageText.y = h * 0.11;
   app.stage.addChild(messageText);
 
   // HUD en bas (solde / mise / gain)
@@ -257,7 +279,7 @@ function buildUi() {
   // Boutons
   const btnWidth = w * 0.25;
   const btnHeight = h * 0.075;
-  const btnY = h * 0.83;
+  const btnY = h * 0.84;
   const gap = w * 0.04;
 
   minusButton = createButton("-1", btnWidth, btnHeight, () => changeBet(-1));
@@ -378,7 +400,6 @@ async function onSpinClick() {
 
     applyResultToReels(grid);
 
-    // petite pause pour laisser s'afficher
     setTimeout(() => {
       finishSpin(win, bonus);
     }, 300);
