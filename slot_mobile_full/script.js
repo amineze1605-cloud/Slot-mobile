@@ -89,8 +89,7 @@ function loadSpritesheet() {
 
     img.onload = () => {
       try {
-        // PIXI v5 : Texture.from => baseTexture
-        const texture = PIXI.Texture.from(img);
+        const texture = PIXI.Texture.from(img);   // v5
         const baseTexture = texture.baseTexture;
         resolve(baseTexture);
       } catch (e) {
@@ -178,7 +177,7 @@ function buildSlotScene() {
   const w = app.renderer.width;
   const h = app.renderer.height;
 
-  const symbolSize = Math.min(w * 0.16, h * 0.16);
+  const symbolSize = Math.min(w * 0.15, h * 0.15); // un poil plus petit
   const reelWidth = symbolSize + 8;
   const totalReelWidth = reelWidth * COLS;
   const visibleHeight = ROWS * (symbolSize + 8) - 8;
@@ -191,9 +190,9 @@ function buildSlotScene() {
   slotContainer.x = (w - totalReelWidth) / 2;
   slotContainer.y = h * 0.24;
 
-  // Cadre de la grille – fond sombre + bord doré
-  const paddingX = symbolSize * 0.35;
-  const paddingY = symbolSize * 0.35;
+  // Cadre de la grille – fond sombre + bord doré (rétréci)
+  const paddingX = symbolSize * 0.12; // AVANT 0.35 -> cadre trop large
+  const paddingY = symbolSize * 0.30;
 
   const frame = new PIXI.Graphics();
   frame.beginFill(0x111623);
@@ -227,7 +226,6 @@ function buildSlotScene() {
       const texture = symbolTextures[idx];
       const sprite = new PIXI.Sprite(texture);
 
-      // mise à l’échelle en gardant le ratio
       const scale = symbolSize / Math.max(texture.width, texture.height);
       sprite.scale.set(scale);
       sprite.x = (reelWidth - symbolSize) / 2;
@@ -248,26 +246,26 @@ function buildUi() {
   const w = app.renderer.width;
   const h = app.renderer.height;
 
-  // Message en haut
+  // Message en haut (taille réduite)
   messageText = new PIXI.Text(
     "",
     new PIXI.TextStyle({
       fill: 0xffffff,
-      fontSize: Math.round(h * 0.035),
+      fontSize: Math.round(h * 0.028), // AVANT ~0.035
       fontWeight: "bold",
     })
   );
   messageText.anchor.set(0.5, 0.5);
   messageText.x = w / 2;
-  messageText.y = h * 0.11;
+  messageText.y = h * 0.10;
   app.stage.addChild(messageText);
 
-  // HUD en bas (solde / mise / gain)
+  // HUD en bas (taille réduite aussi)
   hudText = new PIXI.Text(
     "",
     new PIXI.TextStyle({
       fill: 0xffffff,
-      fontSize: Math.round(h * 0.028),
+      fontSize: Math.round(h * 0.024), // AVANT ~0.028
     })
   );
   hudText.anchor.set(0.5, 0.5);
@@ -423,10 +421,10 @@ function finishSpin(win, bonus) {
 
   if (lastWin > 0) {
     playSound("win");
-    setMessage(`Vous gagnez ${lastWin} — touchez SPIN pour relancer`);
+    setMessage(`Gain : ${lastWin} — appuyez sur SPIN`);
   } else {
     playSound("stop");
-    setMessage("Pas de gain — touchez SPIN pour relancer");
+    setMessage("Pas de gain — appuyez sur SPIN");
   }
 
   if (bonus && (bonus.freeSpins > 0 || bonus.multiplier > 1)) {
