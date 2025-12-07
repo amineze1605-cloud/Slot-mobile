@@ -284,18 +284,22 @@ function buildSlotScene() {
 // HUD + boutons (INFO sous SPIN)
 // --------------------------------------------------
 function makeText(txt, size, y, alignCenter = true) {
+  const w = app.renderer.width;
   const style = new PIXI.TextStyle({
     fontFamily: "system-ui",
     fontSize: size,
     fill: 0xffffff,
+    wordWrap: true,
+    wordWrapWidth: w * 0.9,     // le texte du haut ne déborde plus
+    align: alignCenter ? "center" : "left",
   });
   const t = new PIXI.Text(txt, style);
   if (alignCenter) {
     t.anchor.set(0.5, 0.5);
-    t.x = app.renderer.width / 2;
+    t.x = w / 2;
   } else {
     t.anchor.set(0, 0.5);
-    t.x = app.renderer.width * 0.05;
+    t.x = w * 0.05;
   }
   t.y = y;
   app.stage.addChild(t);
@@ -342,7 +346,11 @@ function buildHUD() {
   const h = app.renderer.height;
 
   // texte du haut
-  messageText = makeText("Appuyez sur SPIN pour lancer", Math.round(h * 0.035), h * 0.10);
+  messageText = makeText(
+    "Appuyez sur SPIN pour lancer",
+    Math.round(h * 0.035),
+    h * 0.10
+  );
 
   // texte du bas (stats solde/mise/gain)
   statsText = makeText("", Math.round(h * 0.028), h * 0.72);
@@ -368,12 +376,12 @@ function buildHUD() {
   btnPlus.x = btnSpin.x + (buttonWidth + spacingX);
   btnPlus.y = buttonsY;
 
-  // bouton INFO — NOUVELLE POSITION : sous SPIN
+  // bouton INFO — sous SPIN
   const infoWidth = buttonWidth * 0.9;
   const infoHeight = buttonHeight * 0.75;
   btnInfo = makeButton("INFO", infoWidth, infoHeight);
   btnInfo.x = w / 2;
-  btnInfo.y = buttonsY + buttonHeight + h * 0.02; // sous SPIN
+  btnInfo.y = buttonsY + buttonHeight + h * 0.02;
 
   // callbacks
   btnMinus.on("pointerup", onBetMinus);
@@ -396,7 +404,7 @@ function updateHUDNumbers() {
 }
 
 // --------------------------------------------------
-// Paytable overlay (centré, bonne taille)
+// Paytable overlay (centré, bouton FERMER)
 // --------------------------------------------------
 function createPaytableOverlay() {
   const w = app.renderer.width;
@@ -404,16 +412,14 @@ function createPaytableOverlay() {
 
   const container = new PIXI.Container();
   container.visible = false;
-  container.interactive = true; // capte les clics
-  container.buttonMode = false;
+  container.interactive = true; // bloque les clics sur le jeu pendant l'affichage
 
-  // fond semi-transparent plein écran
+  // fond semi-transparent plein écran (ne ferme plus la fenêtre)
   const backdrop = new PIXI.Graphics();
   backdrop.beginFill(0x000000, 0.75);
   backdrop.drawRect(0, 0, w, h);
   backdrop.endFill();
   backdrop.interactive = true;
-  backdrop.on("pointerup", () => togglePaytable(false));
   container.addChild(backdrop);
 
   // panneau centré
@@ -427,6 +433,7 @@ function createPaytableOverlay() {
   panel.lineStyle(6, 0xf2b632, 1);
   panel.drawRoundedRect(panelX, panelY, panelWidth, panelHeight, 24);
   panel.endFill();
+  panel.interactive = true;
   container.addChild(panel);
 
   const styleTitle = new PIXI.TextStyle({
@@ -465,6 +472,43 @@ function createPaytableOverlay() {
   body.x = w / 2;
   body.y = title.y + title.height + h * 0.02;
   container.addChild(body);
+
+  // bouton FERMER en bas du panneau
+  const closeWidth = panelWidth * 0.35;
+  const closeHeight = h * 0.06;
+  const close = new PIXI.Container();
+  const cg = new PIXI.Graphics();
+  cg.beginFill(0x111827);
+  cg.lineStyle(4, 0xf2b632, 1);
+  cg.drawRoundedRect(-closeWidth / 2, -closeHeight / 2, closeWidth, closeHeight, 16);
+  cg.endFill();
+
+  const closeStyle = new PIXI.TextStyle({
+    fontFamily: "system-ui",
+    fontSize: Math.round(h * 0.025),
+    fill: 0xffffff,
+  });
+  const closeText = new PIXI.Text("FERMER", closeStyle);
+  closeText.anchor.set(0.5);
+
+  close.addChild(cg, closeText);
+  close.x = w / 2;
+  close.y = panelY + panelHeight - closeHeight - h * 0.02;
+  close.interactive = true;
+  close.buttonMode = true;
+
+  close.on("pointerdown", () => {
+    cg.alpha = 0.7;
+  });
+  close.on("pointerup", () => {
+    cg.alpha = 1.0;
+    togglePaytable(false);
+  });
+  close.on("pointerupoutside", () => {
+    cg.alpha = 1.0;
+  });
+
+  container.addChild(close);
 
   app.stage.addChild(container);
   return container;
@@ -561,7 +605,7 @@ function evaluateGrid(grid, betValue) {
   const bonus = { freeSpins: 0, multiplier: 1 };
   if (bonusCount >= 3) {
     bonus.multiplier = 2;
-    bonus.freeSpins = 10; // (info, on ne gère pas encore les free spins)
+    bonus.freeSpins = 10;
     totalWin *= 2;
   }
 
@@ -664,13 +708,15 @@ function finishSpin(win, winningLines, bonus) {
     });
     if (cells.length) startHighlight(cells);
   } else {
-    playSound("stop");
     updateHUDTexts("Pas de gain — appuyez sur SPIN pour relancer");
+    playSound("stop");
   }
 
   if (bonus && bonus.multiplier > 1) {
     playSound("bonus");
-    updateHUDTexts(`Bonus x${bonus.multiplier} – appuyez sur SPIN pour relancer`);
+    updateHUDTexts(
+      `Bonus x${bonus.multiplier} – appuyez sur SPIN pour relancer`
+    );
   }
 
   updateHUDNumbers();
