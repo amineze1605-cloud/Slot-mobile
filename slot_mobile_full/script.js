@@ -1,15 +1,15 @@
-// script.js
-// Frontend PIXI pour Slot Mobile – 5 lignes, paytable, highlight & bouton Info
+// script.js – Slot mobile avec 5 lignes, paytable, bouton INFO
+// et layout qui tient sur l’écran
 
-// --------------------------------------------------
+// -------------------------------------
 // Références DOM
-// --------------------------------------------------
+// -------------------------------------
 const canvas = document.getElementById("game");
 const loaderEl = document.getElementById("loader");
 
-// --------------------------------------------------
+// -------------------------------------
 // Audio (MP3)
-// --------------------------------------------------
+// -------------------------------------
 const sounds = {
   spin: new Audio("assets/audio/spin.mp3"),
   stop: new Audio("assets/audio/stop.mp3"),
@@ -18,6 +18,7 @@ const sounds = {
 };
 
 Object.values(sounds).forEach((a) => {
+  if (!a) return;
   a.preload = "auto";
   a.volume = 0.7;
 });
@@ -31,9 +32,9 @@ function playSound(name) {
   } catch (e) {}
 }
 
-// --------------------------------------------------
-// Variables de jeu
-// --------------------------------------------------
+// -------------------------------------
+// PIXI + état du jeu
+// -------------------------------------
 let app;
 let symbolTextures = [];
 let reels = [];
@@ -44,38 +45,96 @@ const ROWS = 3;
 let balance = 1000;
 let bet = 1;
 let lastWin = 0;
-let freeSpinsLeft = 0;
 let spinning = false;
 
-// HUD
-let topMessageText;
-let hudText;
+let freeSpins = 0;
+let winMultiplier = 1;
+
+// éléments UI
+let messageLabel;
+let infoButton;
+let balanceText;
+let betText;
+let lastWinText;
 let spinButton;
 let minusButton;
 let plusButton;
-let infoButton;
-let paytableOverlay;
 
-// pour nettoyer les highlights
-let highlightedSprites = [];
+// conteneurs
+let slotContainer;
+let uiContainer;
 
-// mêmes lignes que côté backend
-const PAYLINES = [
-  // 0 : haut
-  [ [0,0], [0,1], [0,2], [0,3], [0,4] ],
-  // 1 : milieu
-  [ [1,0], [1,1], [1,2], [1,3], [1,4] ],
-  // 2 : bas
-  [ [2,0], [2,1], [2,2], [2,3], [2,4] ],
-  // 3 : diagonale V
-  [ [0,0], [1,1], [2,2], [1,3], [0,4] ],
-  // 4 : diagonale ∧
-  [ [2,0], [1,1], [0,2], [1,3], [2,4] ],
+// tailles calculées
+let symbolSize = 100;
+let reelGap = 8;
+let framePadding = 16;
+
+// -------------------------------------
+// Lignes & Paytable
+// -------------------------------------
+const WILD = 10;
+const BONUS = 11;
+
+const LINES = [
+  // 0 : top
+  [
+    [0, 0],
+    [0, 1],
+    [0, 2],
+    [0, 3],
+    [0, 4],
+  ],
+  // 1 : middle
+  [
+    [1, 0],
+    [1, 1],
+    [1, 2],
+    [1, 3],
+    [1, 4],
+  ],
+  // 2 : bottom
+  [
+    [2, 0],
+    [2, 1],
+    [2, 2],
+    [2, 3],
+    [2, 4],
+  ],
+  // 3 : diagonale bas -> haut
+  [
+    [2, 0],
+    [1, 1],
+    [0, 2],
+    [1, 3],
+    [2, 4],
+  ],
+  // 4 : diagonale haut -> bas
+  [
+    [0, 0],
+    [1, 1],
+    [2, 2],
+    [1, 3],
+    [0, 4],
+  ],
 ];
 
-// --------------------------------------------------
+// paytable[indexSymbole][nbSymbolesAlignés]
+const paytable = {
+  0: { 3: 2, 4: 3, 5: 4 },
+  1: { 3: 2, 4: 3, 5: 4 },
+  2: { 3: 2, 4: 3, 5: 4 },
+  3: { 3: 2, 4: 3, 5: 4 },
+  4: { 3: 3, 4: 4, 5: 5 },
+  5: { 3: 4, 4: 5, 5: 6 },
+  6: { 3: 10, 4: 12, 5: 14 },
+  7: { 3: 16, 4: 18, 5: 20 },
+  8: { 3: 20, 4: 25, 5: 30 },
+  9: { 3: 30, 4: 40, 5: 50 },
+};
+
+// -------------------------------------
 // Helpers UI
-// --------------------------------------------------
+// -------------------------------------
 function showMessage(text) {
   if (!loaderEl) return;
   loaderEl.style.display = "flex";
@@ -87,20 +146,19 @@ function hideMessage() {
   loaderEl.style.display = "none";
 }
 
-function setTopMessage(text) {
-  if (topMessageText) {
-    topMessageText.text = text;
-  }
+function updateHud() {
+  if (balanceText) balanceText.text = `Solde : ${balance}`;
+  if (betText) betText.text = `Mise : ${bet}`;
+  if (lastWinText) lastWinText.text = `Dernier gain : ${lastWin}`;
 }
 
-// --------------------------------------------------
-// Chargement manuel de spritesheet.png
-// --------------------------------------------------
+// -------------------------------------
+// Chargement spritesheet.png
+// -------------------------------------
 function loadSpritesheet() {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.src = "assets/spritesheet.png";
-
     img.onload = () => {
       try {
         const baseTexture = PIXI.BaseTexture.from(img);
@@ -109,23 +167,20 @@ function loadSpritesheet() {
         reject(e);
       }
     };
-
-    img.onerror = (e) => {
+    img.onerror = (e) =>
       reject(e || new Error("Impossible de charger assets/spritesheet.png"));
-    };
   });
 }
 
-// --------------------------------------------------
-// Initialisation PIXI + découpe de la spritesheet
-// --------------------------------------------------
+// -------------------------------------
+// Création PIXI
+// -------------------------------------
 async function initPixi() {
   if (!canvas) {
     console.error("Canvas #game introuvable");
     return;
   }
   if (!window.PIXI) {
-    console.error("PIXI introuvable");
     showMessage("Erreur JS : PIXI introuvable");
     return;
   }
@@ -144,7 +199,6 @@ async function initPixi() {
     const fullW = baseTexture.width;
     const fullH = baseTexture.height;
 
-    // 12 symboles = 3 colonnes x 4 lignes sur la spritesheet
     const COLS_SHEET = 3;
     const ROWS_SHEET = 4;
     const frameW = fullW / COLS_SHEET;
@@ -169,69 +223,95 @@ async function initPixi() {
       return;
     }
 
-    buildSlotScene();
-    buildHUD();
-    buildInfoButton();
-    createPaytableOverlay();
-
+    buildScene();
     hideMessage();
-    setTopMessage("Appuyez sur SPIN pour lancer");
-
-    updateHUD();
+    messageLabel.text = "Appuyez sur SPIN pour lancer";
   } catch (e) {
     console.error("Erreur chargement spritesheet.png", e);
-    const msg = (e && e.message) ? e.message : String(e);
+    const msg = e && e.message ? e.message : String(e);
     showMessage("Erreur JS : chargement assets (" + msg + ")");
   }
 }
 
-// --------------------------------------------------
-// Construction de la scène slot (5x3)
-// --------------------------------------------------
-function buildSlotScene() {
+// -------------------------------------
+// Construction de la scène complète
+// -------------------------------------
+function buildScene() {
   const w = app.renderer.width;
   const h = app.renderer.height;
 
-  const slotContainer = new PIXI.Container();
+  app.stage.removeChildren();
+
+  // conteneurs
+  slotContainer = new PIXI.Container();
+  uiContainer = new PIXI.Container();
   app.stage.addChild(slotContainer);
+  app.stage.addChild(uiContainer);
 
-  // Cadre autour de la grille
-  const framePaddingX = w * 0.06;
-  const framePaddingY = h * 0.18;
-  const frameWidth = w - framePaddingX * 2;
-  const frameHeight = h * 0.35;
+  // calcul tailles : la grille occupe ~40% de la hauteur
+  const maxGridHeight = h * 0.4;
+  const maxGridWidth = w * 0.9;
 
-  const frame = new PIXI.Graphics();
-  frame.lineStyle(6, 0xfbbf24, 1);
-  frame.beginFill(0x020617);
-  frame.drawRoundedRect(
-    framePaddingX,
-    framePaddingY,
-    frameWidth,
-    frameHeight,
-    24
+  reelGap = h * 0.008;
+  framePadding = h * 0.02;
+
+  const symbolSizeByHeight =
+    (maxGridHeight - framePadding * 2 - reelGap * (ROWS - 1)) / ROWS;
+  const symbolSizeByWidth =
+    (maxGridWidth - framePadding * 2 - reelGap * (COLS - 1)) / COLS;
+
+  symbolSize = Math.floor(
+    Math.min(symbolSizeByHeight, symbolSizeByWidth, h * 0.14)
   );
-  frame.endFill();
-  slotContainer.addChild(frame);
 
-  const gridArea = new PIXI.Container();
-  slotContainer.addChild(gridArea);
+  const gridWidth =
+    COLS * symbolSize + (COLS - 1) * reelGap + framePadding * 2;
+  const gridHeight =
+    ROWS * symbolSize + (ROWS - 1) * reelGap + framePadding * 2;
 
-  const symbolSize = Math.min(frameWidth / (COLS + 0.5), frameHeight / (ROWS + 0.4));
-  const reelWidth = symbolSize + 10;
-  const totalReelWidth = reelWidth * COLS;
-  const gridX = framePaddingX + (frameWidth - totalReelWidth) / 2;
-  const gridY = framePaddingY + (frameHeight - (ROWS * (symbolSize + 8))) / 2;
+  // ------------------ Texte du haut + bouton INFO
+  const topFontSize = Math.round(h * 0.033);
 
-  gridArea.x = gridX;
-  gridArea.y = gridY;
+  messageLabel = new PIXI.Text("…", {
+    fontFamily: "system-ui",
+    fontSize: topFontSize,
+    fill: 0xffffff,
+    align: "center",
+    wordWrap: true,
+    wordWrapWidth: w * 0.7,
+  });
+  messageLabel.anchor.set(0.5, 0);
+  messageLabel.x = w * 0.5;
+  messageLabel.y = h * 0.04;
+  uiContainer.addChild(messageLabel);
 
+  infoButton = createButton("INFO", () => {
+    togglePaytable();
+  });
+  infoButton.x = w - infoButton.width - h * 0.04;
+  infoButton.y = h * 0.04;
+  uiContainer.addChild(infoButton);
+
+  // ------------------ Cadre de la grille
+  const frameGraphics = new PIXI.Graphics();
+  frameGraphics.lineStyle(Math.max(4, h * 0.006), 0xf2b233, 1);
+  frameGraphics.beginFill(0x11141f, 0.95);
+  frameGraphics.drawRoundedRect(0, 0, gridWidth, gridHeight, h * 0.03);
+  frameGraphics.endFill();
+
+  slotContainer.addChild(frameGraphics);
+
+  // position de la grille (centre vertical)
+  slotContainer.x = (w - gridWidth) / 2;
+  slotContainer.y = h * 0.16;
+
+  // ------------------ Reels & symboles
   reels = [];
 
   for (let c = 0; c < COLS; c++) {
     const reelContainer = new PIXI.Container();
-    gridArea.addChild(reelContainer);
-    reelContainer.x = c * reelWidth;
+    slotContainer.addChild(reelContainer);
+    reelContainer.x = framePadding + c * (symbolSize + reelGap);
 
     const reel = {
       container: reelContainer,
@@ -240,338 +320,359 @@ function buildSlotScene() {
 
     for (let r = 0; r < ROWS; r++) {
       const idx = Math.floor(Math.random() * symbolTextures.length);
-      const texture = symbolTextures[idx];
-      const sprite = new PIXI.Sprite(texture);
+      const sprite = new PIXI.Sprite(symbolTextures[idx]);
 
       sprite.width = symbolSize;
       sprite.height = symbolSize;
       sprite.x = 0;
-      sprite.y = r * (symbolSize + 8);
-
+      sprite.y = framePadding + r * (symbolSize + reelGap);
       reelContainer.addChild(sprite);
       reel.symbols.push(sprite);
     }
 
     reels.push(reel);
   }
+
+  // ------------------ HUD texte (solde / mise / dernier gain)
+  const hudY = slotContainer.y + gridHeight + h * 0.03;
+  const hudFontSize = Math.round(h * 0.028);
+
+  balanceText = new PIXI.Text(`Solde : ${balance}`, {
+    fontFamily: "system-ui",
+    fontSize: hudFontSize,
+    fill: 0xffffff,
+  });
+
+  betText = new PIXI.Text(`Mise : ${bet}`, {
+    fontFamily: "system-ui",
+    fontSize: hudFontSize,
+    fill: 0xffffff,
+  });
+
+  lastWinText = new PIXI.Text(`Dernier gain : ${lastWin}`, {
+    fontFamily: "system-ui",
+    fontSize: hudFontSize,
+    fill: 0xffffff,
+  });
+
+  balanceText.y = betText.y = lastWinText.y = hudY;
+  uiContainer.addChild(balanceText, betText, lastWinText);
+
+  const hudTotalWidth =
+    balanceText.width + betText.width + lastWinText.width + w * 0.06;
+
+  let startX = (w - hudTotalWidth) / 2;
+  balanceText.x = startX;
+  betText.x = balanceText.x + balanceText.width + w * 0.02;
+  lastWinText.x = betText.x + betText.width + w * 0.02;
+
+  // ------------------ Boutons -1, SPIN, +1
+  const buttonsY = hudY + h * 0.06;
+  const buttonWidth = Math.min(w * 0.26, 220);
+  const buttonHeight = Math.min(h * 0.08, 70);
+
+  minusButton = createButton("-1", () => {
+    if (spinning) return;
+    if (bet > 1) {
+      bet -= 1;
+      updateHud();
+    }
+  }, buttonWidth, buttonHeight);
+
+  spinButton = createButton("SPIN", () => {
+    onSpinClick();
+  }, buttonWidth, buttonHeight);
+
+  plusButton = createButton("+1", () => {
+    if (spinning) return;
+    bet += 1;
+    updateHud();
+  }, buttonWidth, buttonHeight);
+
+  const totalButtonsWidth =
+    minusButton.width + spinButton.width + plusButton.width + w * 0.05;
+  startX = (w - totalButtonsWidth) / 2;
+
+  minusButton.x = startX;
+  spinButton.x = minusButton.x + minusButton.width + w * 0.025;
+  plusButton.x = spinButton.x + spinButton.width + w * 0.025;
+
+  minusButton.y = spinButton.y = plusButton.y = buttonsY;
+
+  uiContainer.addChild(minusButton, spinButton, plusButton);
+
+  updateHud();
 }
 
-// --------------------------------------------------
-// HUD & boutons (-1, SPIN, +1)
-// --------------------------------------------------
-function makeButton(label, onClick) {
+// -------------------------------------
+// Création d’un bouton PIXI
+// -------------------------------------
+function createButton(label, onClick, width = 160, height = 64) {
   const container = new PIXI.Container();
 
   const g = new PIXI.Graphics();
-  g.lineStyle(4, 0xfbbf24, 1);
-  g.beginFill(0x020617);
-  g.drawRoundedRect(0, 0, 140, 72, 18);
+  g.beginFill(0x171d2b, 1);
+  g.lineStyle(4, 0xf2b233, 1);
+  g.drawRoundedRect(0, 0, width, height, height * 0.25);
   g.endFill();
 
-  const t = new PIXI.Text(label, {
+  const txt = new PIXI.Text(label, {
+    fontFamily: "system-ui",
+    fontSize: height * 0.4,
     fill: 0xffffff,
-    fontSize: 26,
-    fontWeight: "600",
   });
-  t.anchor.set(0.5);
-  t.x = 70;
-  t.y = 36;
+  txt.anchor.set(0.5);
+  txt.x = width / 2;
+  txt.y = height / 2;
 
-  container.addChild(g);
-  container.addChild(t);
+  container.addChild(g, txt);
 
   container.interactive = true;
   container.buttonMode = true;
-  container.on("pointertap", onClick);
+  container.on("pointertap", (e) => {
+    e.stopPropagation();
+    onClick();
+  });
 
   return container;
 }
 
-function buildHUD() {
+// -------------------------------------
+// Paytable (popup simple)
+// -------------------------------------
+let paytableVisible = false;
+let paytableContainer = null;
+
+function togglePaytable() {
+  if (paytableVisible) {
+    if (paytableContainer && uiContainer) {
+      uiContainer.removeChild(paytableContainer);
+      paytableContainer.destroy({ children: true });
+      paytableContainer = null;
+    }
+    paytableVisible = false;
+    return;
+  }
+
   const w = app.renderer.width;
   const h = app.renderer.height;
 
-  // Message du haut
-  topMessageText = new PIXI.Text("Chargement…", {
-    fill: 0xffffff,
-    fontSize: 22,
-  });
-  topMessageText.anchor.set(0.5);
-  topMessageText.x = w / 2;
-  topMessageText.y = h * 0.10;
-  app.stage.addChild(topMessageText);
-
-  // HUD (solde/mise/gain)
-  hudText = new PIXI.Text("", {
-    fill: 0xffffff,
-    fontSize: 20,
-  });
-  hudText.anchor.set(0.5);
-  hudText.x = w / 2;
-  hudText.y = h * 0.63;
-  app.stage.addChild(hudText);
-
-  // Boutons -1 / SPIN / +1
-  const buttonsContainer = new PIXI.Container();
-  app.stage.addChild(buttonsContainer);
-
-  const spacing = 40;
-  const totalWidth = 3 * 140 + 2 * spacing;
-
-  buttonsContainer.x = (w - totalWidth) / 2;
-  buttonsContainer.y = h * 0.70;
-
-  minusButton = makeButton("-1", () => {
-    if (spinning) return;
-    if (bet > 1) {
-      bet -= 1;
-      updateHUD();
-    }
-  });
-
-  spinButton = makeButton("SPIN", () => {
-    startSpin();
-  });
-
-  plusButton = makeButton("+1", () => {
-    if (spinning) return;
-    if (bet < 1000) {
-      bet += 1;
-      updateHUD();
-    }
-  });
-
-  buttonsContainer.addChild(minusButton);
-  buttonsContainer.addChild(spinButton);
-  buttonsContainer.addChild(plusButton);
-
-  minusButton.x = 0;
-  spinButton.x = 140 + spacing;
-  plusButton.x = 2 * (140 + spacing);
-}
-
-// Bouton Info (petit bouton en haut à droite)
-function buildInfoButton() {
-  const w = app.renderer.width;
-  const h = app.renderer.height;
-
-  const container = new PIXI.Container();
-
-  const g = new PIXI.Graphics();
-  g.lineStyle(2, 0xfbbf24, 1);
-  g.beginFill(0x020617);
-  g.drawRoundedRect(0, 0, 64, 32, 10);
-  g.endFill();
-
-  const t = new PIXI.Text("INFO", {
-    fill: 0xffffff,
-    fontSize: 14,
-    fontWeight: "600",
-  });
-  t.anchor.set(0.5);
-  t.x = 32;
-  t.y = 16;
-
-  container.addChild(g);
-  container.addChild(t);
-
-  container.interactive = true;
-  container.buttonMode = true;
-  container.on("pointertap", () => {
-    if (paytableOverlay) {
-      paytableOverlay.visible = true;
-    }
-  });
-
-  container.x = w - 80;
-  container.y = h * 0.08;
-  app.stage.addChild(container);
-
-  infoButton = container;
-}
-
-// Overlay "Table des gains"
-function createPaytableOverlay() {
-  paytableOverlay = new PIXI.Container();
-  paytableOverlay.visible = false;
-  app.stage.addChild(paytableOverlay);
-
-  const w = app.renderer.width;
-  const h = app.renderer.height;
+  paytableContainer = new PIXI.Container();
 
   const bg = new PIXI.Graphics();
-  bg.beginFill(0x000000, 0.8);
+  bg.beginFill(0x000000, 0.85);
   bg.drawRect(0, 0, w, h);
   bg.endFill();
-  bg.interactive = true;
-  bg.buttonMode = true;
-  bg.on("pointertap", () => {
-    paytableOverlay.visible = false;
-  });
-  paytableOverlay.addChild(bg);
+  paytableContainer.addChild(bg);
 
-  const panelW = w * 0.9;
-  const panelH = h * 0.75;
+  const panelWidth = w * 0.9;
+  const panelHeight = h * 0.7;
 
   const panel = new PIXI.Graphics();
-  panel.beginFill(0x020617);
-  panel.lineStyle(3, 0xfbbf24, 1);
+  panel.beginFill(0x161a2a, 1);
+  panel.lineStyle(4, 0xf2b233, 1);
   panel.drawRoundedRect(
-    (w - panelW) / 2,
-    (h - panelH) / 2,
-    panelW,
-    panelH,
-    20
+    (w - panelWidth) / 2,
+    (h - panelHeight) / 2,
+    panelWidth,
+    panelHeight,
+    18
   );
   panel.endFill();
-  paytableOverlay.addChild(panel);
+  paytableContainer.addChild(panel);
 
   const title = new PIXI.Text("Table des gains", {
+    fontFamily: "system-ui",
+    fontSize: Math.round(h * 0.035),
     fill: 0xffffff,
-    fontSize: 22,
-    fontWeight: "bold",
   });
   title.anchor.set(0.5, 0);
   title.x = w / 2;
-  title.y = (h - panelH) / 2 + 16;
-  paytableOverlay.addChild(title);
+  title.y = (h - panelHeight) / 2 + h * 0.02;
+  paytableContainer.addChild(title);
 
   const lines = [
-    "Cerise / Pastèque / Pomme / Citron (ID 0–3)",
-    "  3 symboles = 2× mise, 4 = 3×, 5 = 4×",
-    "",
-    "Symboles carte (ID 4)",
-    "  3 = 3×, 4 = 4×, 5 = 5×",
-    "",
-    "Pièce (ID 5)",
-    "  3 = 4×, 4 = 5×, 5 = 6×",
-    "",
-    "Couronne (ID 6)",
-    "  3 = 10×, 4 = 12×, 5 = 14×",
-    "",
-    "BAR (ID 7)",
-    "  3 = 16×, 4 = 18×, 5 = 20×",
-    "",
-    "7 (ID 8)",
-    "  3 = 20×, 4 = 25×, 5 = 30×",
-    "",
-    "777 (ID 9)",
-    "  3 = 30×, 4 = 40×, 5 = 50×",
-    "",
-    "WILD (ID 10) : remplace n'importe quel symbole",
-    "  (sauf BONUS) sur une ligne gagnante.",
-    "",
-    "BONUS (ID 11) : 3+ sur la grille =",
-    "  10 free spins + gains du tour x2.",
+    "0-3 : 2× | 4 : 3× | 5 : 4×",
+    "4 (cartes) : 3× / 4× / 5×",
+    "5 (pièce) : 4× / 5× / 6×",
+    "6 (couronne) : 10× / 12× / 14×",
+    "7 (BAR) : 16× / 18× / 20×",
+    "8 (7) : 20× / 25× / 30×",
+    "9 (777) : 30× / 40× / 50×",
+    "10 (WILD) : remplace tout sauf BONUS",
+    "11 (BONUS) : 3+ = 10 free spins, gains ×2",
   ];
 
-  const textStyle = new PIXI.TextStyle({
+  const textBlock = new PIXI.Text(lines.join("\n"), {
+    fontFamily: "system-ui",
+    fontSize: Math.round(h * 0.025),
     fill: 0xffffff,
-    fontSize: 16,
     wordWrap: true,
-    wordWrapWidth: panelW - 40,
-    lineHeight: 22,
+    wordWrapWidth: panelWidth * 0.9,
+    lineHeight: Math.round(h * 0.03),
+  });
+  textBlock.x = (w - panelWidth) / 2 + panelWidth * 0.05;
+  textBlock.y = title.y + h * 0.05;
+  paytableContainer.addChild(textBlock);
+
+  // fermer en touchant n'importe où
+  paytableContainer.interactive = true;
+  paytableContainer.on("pointertap", () => {
+    togglePaytable();
   });
 
-  const details = new PIXI.Text(lines.join("\n"), textStyle);
-  details.x = (w - panelW) / 2 + 20;
-  details.y = title.y + 40;
-  paytableOverlay.addChild(details);
-
-  const hint = new PIXI.Text("(Touchez pour fermer)", {
-    fill: 0x9ca3af,
-    fontSize: 14,
-  });
-  hint.anchor.set(0.5);
-  hint.x = w / 2;
-  hint.y = (h + panelH) / 2 - 24;
-  paytableOverlay.addChild(hint);
+  uiContainer.addChild(paytableContainer);
+  paytableVisible = true;
 }
 
-// --------------------------------------------------
-// Helpers reels / HUD
-// --------------------------------------------------
-function clearHighlights() {
-  highlightedSprites.forEach((sprite) => {
-    sprite.tint = 0xffffff;
-    sprite.scale.set(1);
-  });
-  highlightedSprites = [];
-}
-
-function highlightWinningLines(winningLines) {
-  if (!Array.isArray(winningLines) || !winningLines.length) return;
-  if (!reels || !reels.length) return;
-
-  winningLines.forEach((info) => {
-    const line = PAYLINES[info.lineIndex];
-    if (!line) return;
-
-    const count = info.count || 0;
-    for (let i = 0; i < count; i++) {
-      const [row, col] = line[i];
-      const reel = reels[col];
-      if (!reel) continue;
-      const sprite = reel.symbols[row];
-      if (!sprite) continue;
-
-      sprite.tint = 0xffff99;
-      sprite.scale.set(1.08);
-      highlightedSprites.push(sprite);
-    }
-  });
-}
-
+// -------------------------------------
+// Application de la grille + highlight simple
+// -------------------------------------
 function applyResultToReels(grid) {
-  if (!Array.isArray(grid) || !grid.length) return;
-
   for (let r = 0; r < ROWS; r++) {
     for (let c = 0; c < COLS; c++) {
       const value = grid[r][c];
       const reel = reels[c];
       if (!reel || !reel.symbols[r]) continue;
-
-      const index = value % symbolTextures.length;
-      reel.symbols[r].texture = symbolTextures[index];
+      const sprite = reel.symbols[r];
+      const texture = symbolTextures[value % symbolTextures.length];
+      sprite.texture = texture;
+      sprite.tint = 0xffffff;
+      sprite.alpha = 1;
     }
   }
 }
 
-function updateHUD() {
-  if (!hudText) return;
+// highlight uniquement les symboles gagnants (pas de gros overlay)
+function highlightWinningSymbols(grid, winningLines) {
+  // reset au cas où
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      const sprite = reels[c].symbols[r];
+      sprite.tint = 0xffffff;
+      sprite.alpha = 1;
+    }
+  }
 
-  const freeTxt = freeSpinsLeft > 0 ? ` | Free : ${freeSpinsLeft}` : "";
-  hudText.text =
-    `Solde : ${balance}  |  Mise : ${bet}  |  Dernier gain : ${lastWin}` +
-    freeTxt;
+  if (!winningLines || !winningLines.length) return;
+
+  const toHighlight = [];
+
+  winningLines.forEach((lineInfo) => {
+    const line = LINES[lineInfo.lineIndex];
+    for (let i = 0; i < lineInfo.count; i++) {
+      const [row, col] = line[i];
+      const sprite = reels[col].symbols[row];
+      if (sprite && !toHighlight.includes(sprite)) {
+        toHighlight.push(sprite);
+      }
+    }
+  });
+
+  let visible = true;
+  let blinkCount = 0;
+
+  const interval = setInterval(() => {
+    visible = !visible;
+    toHighlight.forEach((s) => {
+      s.alpha = visible ? 1 : 0.15;
+    });
+
+    blinkCount++;
+    if (blinkCount > 6) {
+      clearInterval(interval);
+      toHighlight.forEach((s) => {
+        s.alpha = 1;
+      });
+    }
+  }, 150);
 }
 
-// --------------------------------------------------
+// -------------------------------------
+// Évaluation de la grille côté client
+// -------------------------------------
+function evaluateGrid(grid, baseBet) {
+  let totalWin = 0;
+  const winningLines = [];
+
+  // lignes normales avec wild
+  LINES.forEach((line, lineIndex) => {
+    const symbols = line.map(([row, col]) => grid[row][col]);
+
+    // si un BONUS est dans la ligne on ne paie pas cette ligne (et le bonus est géré à part)
+    if (symbols.includes(BONUS)) {
+      return;
+    }
+
+    // symbole de base = premier symbole non wild/non bonus
+    let baseSymbol = null;
+    for (const v of symbols) {
+      if (v !== WILD && v !== BONUS) {
+        baseSymbol = v;
+        break;
+      }
+    }
+    if (baseSymbol === null || !paytable[baseSymbol]) return;
+
+    // nombre de symboles alignés en partant de la gauche (wild inclus)
+    let count = 0;
+    for (let i = 0; i < symbols.length; i++) {
+      const v = symbols[i];
+      if (v === baseSymbol || v === WILD) {
+        count++;
+      } else {
+        break;
+      }
+    }
+
+    if (count >= 3) {
+      const mult = paytable[baseSymbol][count] || 0;
+      if (mult > 0) {
+        const win = mult * baseBet;
+        totalWin += win;
+        winningLines.push({ lineIndex, count, win });
+      }
+    }
+  });
+
+  // BONUS = 3+ n'importe où
+  let bonusCount = 0;
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      if (grid[r][c] === BONUS) bonusCount++;
+    }
+  }
+
+  const bonusTriggered = bonusCount >= 3;
+
+  return { baseWin: totalWin, winningLines, bonusTriggered };
+}
+
+// -------------------------------------
 // Gestion du SPIN
-// --------------------------------------------------
-async function startSpin() {
+// -------------------------------------
+async function onSpinClick() {
   if (spinning) return;
   if (!app || !symbolTextures.length) return;
 
-  clearHighlights();
-
-  const isFreeSpin = freeSpinsLeft > 0;
-
-  if (!isFreeSpin) {
-    if (balance < bet) {
-      setTopMessage("Solde insuffisant");
-      return;
-    }
-    balance -= bet;
-  } else {
-    freeSpinsLeft--;
+  const cost = freeSpins > 0 ? 0 : bet;
+  if (balance < cost) {
+    messageLabel.text = "Solde insuffisant";
+    playSound("stop");
+    return;
   }
 
   spinning = true;
   lastWin = 0;
-  updateHUD();
-  setTopMessage("SPIN en cours…");
+  balance -= cost;
+  updateHud();
+
+  if (freeSpins > 0) {
+    freeSpins--;
+  }
+
   playSound("spin");
+  messageLabel.text = "Spin en cours…";
 
   try {
     const response = await fetch("/spin", {
@@ -581,64 +682,69 @@ async function startSpin() {
     });
 
     const data = await response.json();
-    const grid = data.result || [];
-    const win = data.win || 0;
-    const bonus = data.bonus || { freeSpins: 0, multiplier: 1 };
-    const winningLines = data.winningLines || [];
+    const grid = data.result || data.grid || [];
+
+    if (!Array.isArray(grid) || !grid.length) {
+      throw new Error("Réponse /spin invalide");
+    }
 
     applyResultToReels(grid);
 
     setTimeout(() => {
-      finishSpin(win, bonus, winningLines);
-    }, 350);
+      finishSpin(grid);
+    }, 300);
   } catch (err) {
     console.error("Erreur API /spin", err);
-    setTopMessage("Erreur réseau /spin");
-    spinning = false;
+    messageLabel.text = "Erreur réseau /spin";
     playSound("stop");
+    spinning = false;
   }
 }
 
-// --------------------------------------------------
+// -------------------------------------
 // Fin de spin
-// --------------------------------------------------
-function finishSpin(win, bonus, winningLines) {
+// -------------------------------------
+function finishSpin(grid) {
   spinning = false;
 
-  lastWin = win || 0;
-  balance += lastWin;
+  const evalResult = evaluateGrid(grid, bet);
+  let win = evalResult.baseWin;
 
-  if (Array.isArray(winningLines) && winningLines.length > 0) {
-    highlightWinningLines(winningLines);
+  // bonus
+  if (evalResult.bonusTriggered) {
+    freeSpins += 10;
+    winMultiplier *= 2;
+    playSound("bonus");
   }
 
-  let msg = "";
+  win *= winMultiplier;
+  lastWin = win;
+  balance += win;
+  updateHud();
 
-  if (bonus && bonus.freeSpins > 0) {
-    freeSpinsLeft += bonus.freeSpins;
-    msg = `BONUS ! +${bonus.freeSpins} free spins (x${bonus.multiplier})`;
-    playSound("bonus");
-  } else if (lastWin > 0) {
-    msg = `Gain : ${lastWin}`;
+  if (win > 0) {
+    messageLabel.text = `Gain : ${win}`;
     playSound("win");
+    highlightWinningSymbols(grid, evalResult.winningLines);
   } else {
-    msg = "Pas de gain — appuyez sur SPIN";
+    if (freeSpins > 0) {
+      messageLabel.text = `Pas de gain — free spins restants : ${freeSpins}`;
+    } else {
+      messageLabel.text = "Pas de gain — appuyez sur SPIN";
+    }
     playSound("stop");
   }
-
-  setTopMessage(msg);
-  updateHUD();
 }
 
-// --------------------------------------------------
+// -------------------------------------
 // Démarrage
-// --------------------------------------------------
+// -------------------------------------
 window.addEventListener("load", () => {
   try {
     initPixi();
   } catch (e) {
     console.error(e);
-    const msg = (e && e.message) ? e.message : String(e);
+    const msg = e && e.message ? e.message : String(e);
     showMessage("Erreur JS : init (" + msg + ")");
   }
 });
