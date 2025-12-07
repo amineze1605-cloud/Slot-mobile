@@ -177,7 +177,7 @@ function buildSlotScene() {
   const w = app.renderer.width;
   const h = app.renderer.height;
 
-  const symbolSize = Math.min(w * 0.15, h * 0.15); // un poil plus petit
+  const symbolSize = Math.min(w * 0.15, h * 0.15); // taille correcte
   const reelWidth = symbolSize + 8;
   const totalReelWidth = reelWidth * COLS;
   const visibleHeight = ROWS * (symbolSize + 8) - 8;
@@ -190,13 +190,27 @@ function buildSlotScene() {
   slotContainer.x = (w - totalReelWidth) / 2;
   slotContainer.y = h * 0.24;
 
-  // Cadre de la grille – fond sombre + bord doré (rétréci)
-  const paddingX = symbolSize * 0.12; // AVANT 0.35 -> cadre trop large
+  // Ombre portée du cadre
+  const paddingX = symbolSize * 0.12;
   const paddingY = symbolSize * 0.30;
 
+  const shadow = new PIXI.Graphics();
+  shadow.beginFill(0x000000, 0.4);
+  shadow.drawRoundedRect(
+    -paddingX + 4,
+    -paddingY + 6,
+    totalReelWidth + paddingX * 2,
+    visibleHeight + paddingY * 2,
+    24
+  );
+  shadow.endFill();
+  shadow.zIndex = 0;
+  slotContainer.addChild(shadow);
+
+  // Cadre de la grille – fond sombre + bord doré
   const frame = new PIXI.Graphics();
   frame.beginFill(0x111623);
-  frame.lineStyle(4, 0xf6c144, 0.85);
+  frame.lineStyle(4, 0xf6c144, 0.9);
   frame.drawRoundedRect(
     -paddingX,
     -paddingY,
@@ -205,14 +219,14 @@ function buildSlotScene() {
     22
   );
   frame.endFill();
-  frame.zIndex = 0;
+  frame.zIndex = 1;
   slotContainer.addChild(frame);
 
   reels = [];
 
   for (let c = 0; c < COLS; c++) {
     const reelContainer = new PIXI.Container();
-    reelContainer.zIndex = 1;
+    reelContainer.zIndex = 2;
     slotContainer.addChild(reelContainer);
     reelContainer.x = c * reelWidth;
 
@@ -228,6 +242,7 @@ function buildSlotScene() {
 
       const scale = symbolSize / Math.max(texture.width, texture.height);
       sprite.scale.set(scale);
+      sprite._baseScale = scale; // pour les animations plus tard
       sprite.x = (reelWidth - symbolSize) / 2;
       sprite.y = r * (symbolSize + 8);
 
@@ -246,12 +261,12 @@ function buildUi() {
   const w = app.renderer.width;
   const h = app.renderer.height;
 
-  // Message en haut (taille réduite)
+  // Message en haut
   messageText = new PIXI.Text(
     "",
     new PIXI.TextStyle({
       fill: 0xffffff,
-      fontSize: Math.round(h * 0.028), // AVANT ~0.035
+      fontSize: Math.round(h * 0.028),
       fontWeight: "bold",
     })
   );
@@ -260,12 +275,12 @@ function buildUi() {
   messageText.y = h * 0.10;
   app.stage.addChild(messageText);
 
-  // HUD en bas (taille réduite aussi)
+  // HUD en bas
   hudText = new PIXI.Text(
     "",
     new PIXI.TextStyle({
       fill: 0xffffff,
-      fontSize: Math.round(h * 0.024), // AVANT ~0.028
+      fontSize: Math.round(h * 0.024),
     })
   );
   hudText.anchor.set(0.5, 0.5);
@@ -410,6 +425,34 @@ async function onSpinClick() {
 }
 
 // --------------------------------------------------
+// Animation ligne gagnante (ligne du milieu)
+// --------------------------------------------------
+function highlightWinRow() {
+  const midRow = 1;
+  const sprites = [];
+
+  for (let c = 0; c < COLS; c++) {
+    const reel = reels[c];
+    if (!reel || !reel.symbols[midRow]) continue;
+    const s = reel.symbols[midRow];
+    const base = s._baseScale || s.scale.x;
+    s._baseScale = base;
+    s.scale.set(base * 1.18);
+    s.tint = 0xffffcc;
+    sprites.push(s);
+  }
+
+  // retour à la normale après un petit temps
+  setTimeout(() => {
+    sprites.forEach((s) => {
+      const base = s._baseScale || 1;
+      s.scale.set(base);
+      s.tint = 0xffffff;
+    });
+  }, 450);
+}
+
+// --------------------------------------------------
 // Fin de spin
 // --------------------------------------------------
 function finishSpin(win, bonus) {
@@ -422,6 +465,7 @@ function finishSpin(win, bonus) {
   if (lastWin > 0) {
     playSound("win");
     setMessage(`Gain : ${lastWin} — appuyez sur SPIN`);
+    highlightWinRow();
   } else {
     playSound("stop");
     setMessage("Pas de gain — appuyez sur SPIN");
