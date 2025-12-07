@@ -1,5 +1,5 @@
 // script.js
-// Slot mobile : PIXI v5 + spritesheet.png découpée manuellement
+// Slot mobile avec bouton SPIN + sons simples
 
 // --------------------------------------------------
 // Références DOM
@@ -8,58 +8,46 @@ const canvas = document.getElementById("game");
 const loaderEl = document.getElementById("loader");
 
 // --------------------------------------------------
-// Audio
+// Audio très simple (HTMLAudioElement)
 // --------------------------------------------------
-const sounds = {
-  spin: new Audio("assets/audio/spin.wav"),
-  stop: new Audio("assets/audio/stop.wav"),
-  win: new Audio("assets/audio/win.wav"),
-  bonus: new Audio("assets/audio/bonus.wav"),
-};
-
-Object.values(sounds).forEach((a) => {
+function makeSound(path) {
+  const a = new Audio(path);
   a.preload = "auto";
   a.volume = 0.7;
-});
+  a.setAttribute("playsinline", "playsinline");
+  return a;
+}
+
+const sounds = {
+  spin: makeSound("assets/audio/spin.wav"),
+  stop: makeSound("assets/audio/stop.wav"),
+  win: makeSound("assets/audio/win.wav"),
+  bonus: makeSound("assets/audio/bonus.wav"),
+};
 
 let audioUnlocked = false;
 
-function unlockAudioOnce() {
+function unlockAudio() {
   if (audioUnlocked) return;
   audioUnlocked = true;
 
-  // petit hack iOS : on fait un play() muet une fois
-  Object.values(sounds).forEach((s) => {
+  // petit ping silencieux pour "débloquer" iOS
+  Object.values(sounds).forEach((a) => {
     try {
-      const prevMuted = s.muted;
-      s.muted = true;
-      s.play()
+      a.muted = true;
+      a.play()
         .then(() => {
-          s.pause();
-          s.currentTime = 0;
-          s.muted = prevMuted;
+          a.pause();
+          a.currentTime = 0;
+          a.muted = false;
         })
-        .catch(() => {
-          s.muted = prevMuted;
-        });
+        .catch(() => {});
     } catch (e) {}
   });
 }
 
-window.addEventListener(
-  "touchend",
-  () => {
-    unlockAudioOnce();
-  },
-  { once: true }
-);
-window.addEventListener(
-  "click",
-  () => {
-    unlockAudioOnce();
-  },
-  { once: true }
-);
+window.addEventListener("touchstart", unlockAudio, { once: true });
+window.addEventListener("mousedown", unlockAudio, { once: true });
 
 function playSound(name) {
   const s = sounds[name];
@@ -85,68 +73,38 @@ let bet = 1;
 let lastWin = 0;
 let spinning = false;
 
-let messageText; // texte en haut
-let infoText; // texte en bas
-let isReady = false; // la grille est prête
+// éléments UI PIXI
+let msgText;
+let infoText;
+let spinButton;
+let minusButton;
+let plusButton;
 
 // --------------------------------------------------
 // Helpers UI
 // --------------------------------------------------
-function showLoader(text) {
+function showMessage(text) {
   if (!loaderEl) return;
   loaderEl.style.display = "flex";
   loaderEl.textContent = text;
 }
 
-function hideLoader() {
+function hideMessage() {
   if (!loaderEl) return;
   loaderEl.style.display = "none";
 }
 
-function updateInfoText() {
-  if (!infoText) return;
-  infoText.text = `Solde : ${balance}  |  Mise : ${bet}  |  Dernier gain : ${lastWin}`;
-}
-
-function setMessage(text) {
-  if (!messageText) return;
-  messageText.text = text;
-}
-
 // --------------------------------------------------
-// Chargement manuel de spritesheet.png
+// Initialisation PIXI + chargement spritesheet
 // --------------------------------------------------
-function loadSpritesheet() {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.src = "assets/spritesheet.png";
-
-    img.onload = () => {
-      try {
-        const baseTexture = PIXI.BaseTexture.from(img);
-        resolve(baseTexture);
-      } catch (e) {
-        reject(e);
-      }
-    };
-
-    img.onerror = (e) => {
-      reject(e || new Error("Impossible de charger assets/spritesheet.png"));
-    };
-  });
-}
-
-// --------------------------------------------------
-// Initialisation PIXI + découpe de la spritesheet
-// --------------------------------------------------
-async function initPixi() {
+function initPixi() {
   if (!canvas) {
     console.error("Canvas #game introuvable");
     return;
   }
   if (!window.PIXI) {
-    console.error("PIXI introuvable (CDN ?)");
-    showLoader("Erreur JS : PIXI introuvable");
+    console.error("PIXI introuvable");
+    showMessage("Erreur JS : PIXI introuvable");
     return;
   }
 
@@ -157,72 +115,64 @@ async function initPixi() {
     antialias: true,
   });
 
-  showLoader("Chargement…");
+  showMessage("Chargement…");
 
-  try {
-    const baseTexture = await loadSpritesheet();
-    const fullW = baseTexture.width;
-    const fullH = baseTexture.height;
-
-    // 12 symboles = 3 colonnes x 4 lignes dans ton PNG
-    const COLS_SHEET = 3;
-    const ROWS_SHEET = 4;
-    const frameW = fullW / COLS_SHEET;
-    const frameH = fullH / ROWS_SHEET;
-
-    symbolTextures = [];
-
-    for (let r = 0; r < ROWS_SHEET; r++) {
-      for (let c = 0; c < COLS_SHEET; c++) {
-        const rect = new PIXI.Rectangle(
-          c * frameW,
-          r * frameH,
-          frameW,
-          frameH
-        );
-        const tex = new PIXI.Texture(baseTexture, rect);
-        symbolTextures.push(tex);
-      }
+  const loader = new PIXI.Loader();
+  loader.add("sheet", "assets/spritesheet.png");
+  loader.load((_, resources) => {
+    try {
+      const baseTexture = resources.sheet.texture.baseTexture;
+      buildTexturesFromSheet(baseTexture);
+      buildScene();
+      hideMessage();
+      setMainMessage("Touchez SPIN pour relancer");
+      updateInfoText();
+    } catch (e) {
+      console.error(e);
+      showMessage("Erreur JS : chargement assets");
     }
+  });
+}
 
-    if (!symbolTextures.length) {
-      showLoader("Erreur JS : spritesheet vide");
-      return;
+// découpe la spritesheet 3 colonnes x 4 lignes = 12 symboles
+function buildTexturesFromSheet(baseTexture) {
+  symbolTextures = [];
+  const COLS_SHEET = 3;
+  const ROWS_SHEET = 4;
+  const frameW = baseTexture.width / COLS_SHEET;
+  const frameH = baseTexture.height / ROWS_SHEET;
+
+  for (let r = 0; r < ROWS_SHEET; r++) {
+    for (let c = 0; c < COLS_SHEET; c++) {
+      const rect = new PIXI.Rectangle(c * frameW, r * frameH, frameW, frameH);
+      const tex = new PIXI.Texture(baseTexture, rect);
+      symbolTextures.push(tex);
     }
-
-    buildSlotScene();
-    hideLoader();
-    isReady = true;
-    setMessage("Touchez SPIN pour lancer");
-  } catch (e) {
-    console.error("Erreur chargement spritesheet.png", e);
-    const msg = e && e.message ? e.message : String(e);
-    showLoader("Erreur JS : chargement assets (" + msg + ")");
   }
 }
 
 // --------------------------------------------------
-// Construction de la scène slot (5x3)
+// Construction de la scène (grille + textes + boutons)
 // --------------------------------------------------
-function buildSlotScene() {
+function buildScene() {
+  app.stage.removeChildren();
+  reels = [];
+
   const w = app.renderer.width;
   const h = app.renderer.height;
 
   const symbolSize = Math.min(w * 0.16, h * 0.16);
-  const reelGapX = 8;
-  const reelGapY = 8;
-  const reelWidth = symbolSize + reelGapX;
-  const totalReelWidth = reelWidth * COLS - reelGapX;
+  const reelWidth = symbolSize + 8;
+  const totalReelWidth = reelWidth * COLS;
 
-  // container principal pour la grille
+  // conteneur principal pour la grille
   const slotContainer = new PIXI.Container();
   app.stage.addChild(slotContainer);
 
   slotContainer.x = (w - totalReelWidth) / 2;
   slotContainer.y = h * 0.25;
 
-  reels = [];
-
+  // --- Grille de symboles 5x3 ---
   for (let c = 0; c < COLS; c++) {
     const reelContainer = new PIXI.Container();
     slotContainer.addChild(reelContainer);
@@ -241,7 +191,7 @@ function buildSlotScene() {
       sprite.width = symbolSize;
       sprite.height = symbolSize;
       sprite.x = 0;
-      sprite.y = r * (symbolSize + reelGapY);
+      sprite.y = r * (symbolSize + 8);
 
       reelContainer.addChild(sprite);
       reel.symbols.push(sprite);
@@ -250,137 +200,92 @@ function buildSlotScene() {
     reels.push(reel);
   }
 
-  // Texte du haut
-  const msgStyle = new PIXI.TextStyle({
-    fontFamily:
-      "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
-    fontSize: 26,
+  // --- Texte principal (message) ---
+  const msgFontSize = Math.round(h * 0.035); // plus petit qu'avant
+  msgText = new PIXI.Text("Chargement…", {
+    fontFamily: "system-ui",
+    fontSize: msgFontSize,
     fill: 0xffffff,
   });
-  messageText = new PIXI.Text("Chargement…", msgStyle);
-  messageText.anchor.set(0.5, 0.5);
-  messageText.x = w / 2;
-  messageText.y = h * 0.12;
-  app.stage.addChild(messageText);
+  msgText.anchor.set(0.5);
+  msgText.x = w / 2;
+  msgText.y = h * 0.14;
+  app.stage.addChild(msgText);
 
-  // Texte du bas (solde / mise / dernier gain)
-  const infoStyle = new PIXI.TextStyle({
-    fontFamily:
-      "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
-    fontSize: 22,
+  // --- Texte infos : solde, mise, gain ---
+  const infoFontSize = Math.round(h * 0.03);
+  infoText = new PIXI.Text("", {
+    fontFamily: "system-ui",
+    fontSize: infoFontSize,
     fill: 0xffffff,
   });
-  infoText = new PIXI.Text("", infoStyle);
-  infoText.anchor.set(0.5, 0.5);
+  infoText.anchor.set(0.5);
   infoText.x = w / 2;
-  infoText.y = slotContainer.y + ROWS * (symbolSize + reelGapY) + 32;
+  infoText.y = slotContainer.y + ROWS * (symbolSize + 8) + h * 0.035;
   app.stage.addChild(infoText);
-  updateInfoText();
 
-  // Boutons mise -1 / SPIN / +1
-  const buttonY = infoText.y + 80;
-  const minusX = w / 2 - 170;
-  const spinX = w / 2;
-  const plusX = w / 2 + 170;
+  // --- Boutons -1 / SPIN / +1 ---
+  const buttonsY = infoText.y + h * 0.08;
+  const btnWidth = w * 0.25;
+  const btnHeight = h * 0.08;
+  const btnGap = w * 0.04;
+  const baseX = w / 2;
 
-  createBetButton(minusX, buttonY, "-1", () => {
-    unlockAudioOnce(); // déverrouille aussi l'audio
-    if (bet > 1) {
-      bet -= 1;
-      updateInfoText();
-    }
-  });
+  minusButton = createButton("-1", btnWidth, btnHeight);
+  minusButton.x = baseX - btnWidth - btnGap / 2;
+  minusButton.y = buttonsY;
+  minusButton.on("pointertap", () => changeBet(-1));
+  app.stage.addChild(minusButton);
 
-  createSpinButton(spinX, buttonY, "SPIN", () => {
-    unlockAudioOnce();
+  spinButton = createButton("SPIN", btnWidth, btnHeight);
+  spinButton.x = baseX;
+  spinButton.y = buttonsY;
+  spinButton.on("pointertap", () => {
     onSpinClick();
   });
+  app.stage.addChild(spinButton);
 
-  createBetButton(plusX, buttonY, "+1", () => {
-    unlockAudioOnce();
-    bet += 1;
-    updateInfoText();
-  });
+  plusButton = createButton("+1", btnWidth, btnHeight);
+  plusButton.x = baseX + btnWidth + btnGap / 2;
+  plusButton.y = buttonsY;
+  plusButton.on("pointertap", () => changeBet(1));
+  app.stage.addChild(plusButton);
 }
 
-// --------------------------------------------------
-// Création d’un bouton générique (-1 / +1)
-// --------------------------------------------------
-function createBetButton(x, y, label, onClick) {
-  const btnWidth = 130;
-  const btnHeight = 70;
-  const radius = 12;
-
+function createButton(label, w, h) {
   const container = new PIXI.Container();
-  container.x = x - btnWidth / 2;
-  container.y = y - btnHeight / 2;
-
   const g = new PIXI.Graphics();
-  g.lineStyle(3, 0xffc857);
-  g.beginFill(0x111827);
-  g.drawRoundedRect(0, 0, btnWidth, btnHeight, radius);
-  g.endFill();
-  container.addChild(g);
+  const radius = Math.min(w, h) * 0.18;
 
-  const txt = new PIXI.Text(label, {
-    fontFamily:
-      "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
-    fontSize: 28,
+  g.lineStyle(3, 0xffcc66);
+  g.beginFill(0x222638);
+  g.drawRoundedRect(-w / 2, -h / 2, w, h, radius);
+  g.endFill();
+
+  const text = new PIXI.Text(label, {
+    fontFamily: "system-ui",
+    fontSize: Math.round(h * 0.4),
     fill: 0xffffff,
   });
-  txt.anchor.set(0.5, 0.5);
-  txt.x = btnWidth / 2;
-  txt.y = btnHeight / 2;
-  container.addChild(txt);
+  text.anchor.set(0.5);
+
+  container.addChild(g);
+  container.addChild(text);
 
   container.interactive = true;
   container.buttonMode = true;
-  container.on("pointertap", (ev) => {
-    ev.stopPropagation();
-    onClick();
-  });
 
-  app.stage.addChild(container);
+  return container;
 }
 
-// --------------------------------------------------
-// Bouton SPIN
-// --------------------------------------------------
-function createSpinButton(x, y, label, onClick) {
-  const btnWidth = 150;
-  const btnHeight = 80;
-  const radius = 18;
+function setMainMessage(txt) {
+  if (!msgText) return;
+  msgText.text = txt;
+}
 
-  const container = new PIXI.Container();
-  container.x = x - btnWidth / 2;
-  container.y = y - btnHeight / 2;
-
-  const g = new PIXI.Graphics();
-  g.lineStyle(4, 0xffc857);
-  g.beginFill(0x1f2937);
-  g.drawRoundedRect(0, 0, btnWidth, btnHeight, radius);
-  g.endFill();
-  container.addChild(g);
-
-  const txt = new PIXI.Text(label, {
-    fontFamily:
-      "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
-    fontSize: 28,
-    fill: 0xffffff,
-  });
-  txt.anchor.set(0.5, 0.5);
-  txt.x = btnWidth / 2;
-  txt.y = btnHeight / 2;
-  container.addChild(txt);
-
-  container.interactive = true;
-  container.buttonMode = true;
-  container.on("pointertap", (ev) => {
-    ev.stopPropagation();
-    onClick();
-  });
-
-  app.stage.addChild(container);
+function updateInfoText() {
+  if (!infoText) return;
+  infoText.text = `Solde : ${balance}  |  Mise : ${bet}  |  Dernier gain : ${lastWin}`;
 }
 
 // --------------------------------------------------
@@ -405,26 +310,41 @@ function getTextureByIndex(index) {
   if (!symbolTextures.length) {
     return PIXI.Texture.WHITE;
   }
-  const safeIndex = index % symbolTextures.length;
+  const safeIndex = ((index % symbolTextures.length) + symbolTextures.length) % symbolTextures.length;
   return symbolTextures[safeIndex] || symbolTextures[0];
+}
+
+// --------------------------------------------------
+// Gestion de la mise
+// --------------------------------------------------
+function changeBet(delta) {
+  const newBet = bet + delta;
+  const minBet = 1;
+  const maxBet = 50;
+
+  if (newBet < minBet || newBet > maxBet) return;
+  bet = newBet;
+  updateInfoText();
 }
 
 // --------------------------------------------------
 // Gestion du SPIN
 // --------------------------------------------------
 async function onSpinClick() {
-  if (!isReady) return;
   if (spinning) return;
   if (!app || !symbolTextures.length) return;
 
+  if (bet > balance) {
+    setMainMessage("Solde insuffisant");
+    playSound("stop");
+    return;
+  }
+
   spinning = true;
   lastWin = 0;
-
-  if (bet > balance) bet = balance > 0 ? balance : 1;
-
   balance -= bet;
   updateInfoText();
-  setMessage("Spin en cours…");
+  setMainMessage("SPIN en cours…");
   playSound("spin");
 
   try {
@@ -446,10 +366,7 @@ async function onSpinClick() {
     }, 300);
   } catch (err) {
     console.error("Erreur API /spin", err);
-    if (loaderEl) {
-      loaderEl.style.display = "flex";
-      loaderEl.textContent = "Erreur JS : API";
-    }
+    setMainMessage("Erreur API");
     spinning = false;
     playSound("stop");
   }
@@ -463,20 +380,19 @@ function finishSpin(win, bonus) {
 
   lastWin = win || 0;
   balance += lastWin;
+  updateInfoText();
 
   if (lastWin > 0) {
     playSound("win");
-    setMessage(`Gagné : ${lastWin} — touchez SPIN pour relancer`);
+    setMainMessage(`Gagné : ${lastWin} — touchez SPIN pour relancer`);
   } else {
     playSound("stop");
-    setMessage("Pas de gain — touchez SPIN pour relancer");
+    setMainMessage("Pas de gain — touchez SPIN pour relancer");
   }
 
   if (bonus && (bonus.freeSpins > 0 || bonus.multiplier > 1)) {
     playSound("bonus");
   }
-
-  updateInfoText();
 }
 
 // --------------------------------------------------
@@ -487,7 +403,6 @@ window.addEventListener("load", () => {
     initPixi();
   } catch (e) {
     console.error(e);
-    const msg = e && e.message ? e.message : String(e);
-    showLoader("Erreur JS : init (" + msg + ")");
+    showMessage("Erreur JS : init");
   }
 });
