@@ -41,6 +41,37 @@ function setupAudioUnlock() {
         }).catch(() => {});
       } catch (e) {}
     });
+    
+    // --------------------------------------------------
+// Déblocage audio iOS (une seule fois au premier touch / clic)
+// --------------------------------------------------
+let audioUnlocked = false;
+
+function unlockAudioOnce() {
+  if (audioUnlocked) return;
+  audioUnlocked = true;
+
+  Object.values(sounds).forEach(a => {
+    const oldVolume = a.volume;
+    a.volume = 0;          // on évite un "plop" au déblocage
+    a.play().then(() => {
+      a.pause();
+      a.currentTime = 0;
+      a.volume = oldVolume;
+    }).catch(() => {
+      // on ignore, certains navigateurs n'aiment pas
+      a.volume = oldVolume;
+    });
+  });
+
+  // on enlève les listeners après déblocage
+  window.removeEventListener("touchstart", unlockAudioOnce);
+  window.removeEventListener("mousedown", unlockAudioOnce);
+}
+
+// premier geste utilisateur n'importe où sur la page
+window.addEventListener("touchstart", unlockAudioOnce, { passive: true });
+window.addEventListener("mousedown", unlockAudioOnce);
 
     window.removeEventListener("touchstart", unlock);
     window.removeEventListener("mousedown", unlock);
