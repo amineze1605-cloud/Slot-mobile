@@ -385,14 +385,17 @@ function buildInfoOverlay() {
 }
 
 function updateInfoOverlayLayout() {
-  if (!infoOverlay) return;
+  if (!infoOverlay || !app) return;
 
-  // on garde le bg en index 0
+  const w = app.renderer.screen.width;
+  const h = app.renderer.screen.height;
+
+  // BG semi-transparent
   const bg = infoOverlay.children[0];
   if (bg && bg.clear) {
     bg.clear();
     bg.beginFill(0x000000, 0.6);
-    bg.drawRect(0, 0, app.renderer.width, app.renderer.height);
+    bg.drawRect(0, 0, w, h);
     bg.endFill();
   }
 
@@ -404,10 +407,10 @@ function updateInfoOverlayLayout() {
     infoPanel.clear();
   }
 
-  const panelW = app.renderer.width * 0.9;
-  const panelH = app.renderer.height * 0.7;
-  const panelX = (app.renderer.width - panelW) / 2;
-  const panelY = (app.renderer.height - panelH) / 2;
+  const panelW = w * 0.9;
+  const panelH = h * 0.7;
+  const panelX = (w - panelW) / 2;
+  const panelY = (h - panelH) / 2;
 
   infoPanel.lineStyle(4, 0xffc247, 1);
   infoPanel.beginFill(0x12182a);
@@ -415,14 +418,14 @@ function updateInfoOverlayLayout() {
   infoPanel.endFill();
 
   if (infoText) {
-    infoText.x = app.renderer.width / 2;
+    infoText.x = w / 2;
     infoText.y = panelY + 24;
     infoText.style.wordWrapWidth = panelW - 40;
   }
 
   if (!infoOverlay.btnClose) return;
   const btnClose = infoOverlay.btnClose;
-  btnClose.x = app.renderer.width / 2 - btnClose.width / 2;
+  btnClose.x = w / 2 - btnClose.width / 2;
   btnClose.y = panelY + panelH - btnClose.height - 20;
 }
 
