@@ -470,31 +470,27 @@ function layoutUI() {
   const w = app.renderer.width;
   const h = app.renderer.height;
 
-  // marges pour éviter l'encoche en haut et la barre du navigateur / HUD en bas
-  const topMargin = 80;
-  const bottomMargin = 160;
+  // --- Taille des symboles ---
+  // On utilise ~86% de la largeur pour les rouleaux
+  const usableWidth = w * 0.86;
+  const symbolFromWidth = usableWidth / COLS;
 
-  // hauteur disponible pour les rouleaux
-  const availableH = Math.max(h - topMargin - bottomMargin, 220);
+  // On limite la hauteur des rouleaux à ~45% de l'écran
+  const maxReelsHeight = h * 0.45;
+  const symbolFromHeight = maxReelsHeight / ROWS;
 
-  // taille des symboles en fonction de la largeur et de la hauteur dispo
-  const maxSymbolByWidth = (w * 0.8) / COLS;   // on garde ~80% de la largeur
-  const maxSymbolByHeight = availableH / ROWS;
-
-  const symbolSize = Math.max(
-    48, // taille mini
-    Math.min(maxSymbolByWidth, maxSymbolByHeight)
-  );
+  // Taille finale : pas trop petite, mais clampée par largeur/hauteur
+  const symbolSize = Math.max(52, Math.min(symbolFromWidth, symbolFromHeight));
 
   const colGap = symbolSize * 0.10;
   const rowGap = symbolSize * 0.12;
 
-  // placer les symboles dans chaque rouleau
+  // --- Placement des symboles dans chaque rouleau ---
   for (let c = 0; c < COLS; c++) {
     const reel = reels[c];
     const reelX = c * (symbolSize + colGap);
-
     reel.container.x = reelX;
+
     for (let r = 0; r < ROWS; r++) {
       const sprite = reel.symbols[r];
       sprite.width = symbolSize;
@@ -507,17 +503,20 @@ function layoutUI() {
   const totalReelW = COLS * symbolSize + colGap * (COLS - 1);
   const totalReelH = ROWS * symbolSize + rowGap * (ROWS - 1);
 
-  // centrer les rouleaux horizontalement,
-  // et les placer plutôt dans le haut / centre de l'écran
+  // --- Texte du haut ---
+  topText.x = w / 2;
+  topText.y = 24; // fixé, pour éviter le gros trou
+
+  // --- Position des rouleaux ---
   slotContainer.x = (w - totalReelW) / 2;
+  // On colle juste sous le texte
+  slotContainer.y = topText.y + topText.height + 24;
 
-  const slotTop = topMargin + (availableH - totalReelH) / 2;
-  slotContainer.y = Math.max(topMargin, slotTop);
-
-  // cadre autour des rouleaux
+  // --- Cadre jaune autour des rouleaux ---
   frameGfx.clear();
   const padX = symbolSize * 0.35;
   const padY = symbolSize * 0.35;
+
   const frameX = slotContainer.x - padX;
   const frameY = slotContainer.y - padY;
   const frameW = totalReelW + padX * 2;
@@ -526,21 +525,17 @@ function layoutUI() {
   frameGfx.lineStyle(8, 0xffc247, 1);
   frameGfx.drawRoundedRect(frameX, frameY, frameW, frameH, 28);
 
-  // texte du haut
-  topText.x = w / 2;
-  topText.y = Math.max(16, frameY - 64);
+  // --- HUD (Solde / Mise / Dernier gain) ---
+  const hudY = frameY + frameH + 24;
 
-  // HUD (solde / mise / dernier gain) juste au-dessus des boutons
-  const hudY = h - bottomMargin + 30;
-
-  hudBalanceText.x = 20;
+  hudBalanceText.x = 16;
   hudBetText.x = w / 2;
-  hudLastWinText.x = w - 20;
+  hudLastWinText.x = w - 16;
 
   hudBalanceText.y = hudBetText.y = hudLastWinText.y = hudY;
 
-  // boutons au-dessus de la barre du navigateur
-  const btnY = hudY - 80;
+  // --- Boutons ---
+  const btnY = hudY + 56;
   const centerX = w / 2;
 
   btnSpin.x = centerX - btnSpin.width / 2;
@@ -553,37 +548,16 @@ function layoutUI() {
   btnPlus.x = btnSpin.x + btnSpin.width + spacing;
   btnPlus.y = btnY;
 
-  // bouton INFO sous SPIN mais encore bien au-dessus du bas de l’écran
-  btnInfo.x = centerX - btnInfo.width / 2;
-  btnInfo.y = Math.min(h - btnInfo.height - 12, btnY + btnInfo.height + 18);
-
-  // overlay de la table des gains (s’adapte à la nouvelle taille)
-  updateInfoOverlayLayout();
-}
-
-// --------------------------------------------------
-// APPLY GRID & HIGHLIGHT
-// --------------------------------------------------
-function applyResultToReels(grid) {
-  if (!Array.isArray(grid) || grid.length !== ROWS) return;
-
-  for (let r = 0; r < ROWS; r++) {
-    for (let c = 0; c < COLS; c++) {
-      const value = grid[r][c];
-      const reel = reels[c];
-      if (!reel || !reel.symbols[r]) continue;
-      const texture = getTextureByIndex(value);
-      reel.symbols[r].texture = texture;
-    }
+  // Bouton INFO sous SPIN, mais clampé pour ne pas sortir de l'écran
+  let infoY = btnY + btnInfo.height + 18;
+  if (infoY + btnInfo.height > h - 10) {
+    infoY = h - btnInfo.height - 10;
   }
-}
+  btnInfo.x = centerX - btnInfo.width / 2;
+  btnInfo.y = infoY;
 
-function getTextureByIndex(index) {
-  if (!symbolTextures.length) return PIXI.Texture.WHITE;
-  const safe =
-    ((index % symbolTextures.length) + symbolTextures.length) %
-    symbolTextures.length;
-  return symbolTextures[safe] || symbolTextures[0];
+  // Adapter l’overlay de la table des gains à la nouvelle taille
+  updateInfoOverlayLayout();
 }
 
 // --------------------------------------------------
