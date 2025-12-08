@@ -470,27 +470,31 @@ function layoutUI() {
   const w = app.renderer.width;
   const h = app.renderer.height;
 
-  // marges pour ne pas toucher la barre du haut / bas
-  const topMargin = 110;
-  const bottomMargin = 230;
+  // marges pour éviter l'encoche en haut et la barre du navigateur / HUD en bas
+  const topMargin = 80;
+  const bottomMargin = 160;
 
-  const maxSymbolByWidth = (w * 0.8) / COLS;
-  const availableHeightForReels = Math.max(h - topMargin - bottomMargin, 200);
-  const maxSymbolByHeight = (availableHeightForReels / ROWS) * 0.8;
+  // hauteur disponible pour les rouleaux
+  const availableH = Math.max(h - topMargin - bottomMargin, 220);
+
+  // taille des symboles en fonction de la largeur et de la hauteur dispo
+  const maxSymbolByWidth = (w * 0.8) / COLS;   // on garde ~80% de la largeur
+  const maxSymbolByHeight = availableH / ROWS;
 
   const symbolSize = Math.max(
-    40,
+    48, // taille mini
     Math.min(maxSymbolByWidth, maxSymbolByHeight)
   );
 
-  const reelGap = symbolSize * 0.12;
-  const rowGap = symbolSize * 0.18;
-  const reelWidth = symbolSize + reelGap;
+  const colGap = symbolSize * 0.10;
+  const rowGap = symbolSize * 0.12;
 
-  // position des symboles
+  // placer les symboles dans chaque rouleau
   for (let c = 0; c < COLS; c++) {
     const reel = reels[c];
-    reel.container.x = c * reelWidth;
+    const reelX = c * (symbolSize + colGap);
+
+    reel.container.x = reelX;
     for (let r = 0; r < ROWS; r++) {
       const sprite = reel.symbols[r];
       sprite.width = symbolSize;
@@ -500,16 +504,17 @@ function layoutUI() {
     }
   }
 
-  const totalReelW = reelWidth * COLS - reelGap;
-  const totalReelH = ROWS * (symbolSize + rowGap) - rowGap;
+  const totalReelW = COLS * symbolSize + colGap * (COLS - 1);
+  const totalReelH = ROWS * symbolSize + rowGap * (ROWS - 1);
 
-  const reelsAreaTop = topMargin;
-  const slotY = reelsAreaTop + (availableHeightForReels - totalReelH) / 2;
-
+  // centrer les rouleaux horizontalement,
+  // et les placer plutôt dans le haut / centre de l'écran
   slotContainer.x = (w - totalReelW) / 2;
-  slotContainer.y = Math.max(80, slotY);
 
-  // cadre autour
+  const slotTop = topMargin + (availableH - totalReelH) / 2;
+  slotContainer.y = Math.max(topMargin, slotTop);
+
+  // cadre autour des rouleaux
   frameGfx.clear();
   const padX = symbolSize * 0.35;
   const padY = symbolSize * 0.35;
@@ -523,66 +528,36 @@ function layoutUI() {
 
   // texte du haut
   topText.x = w / 2;
-  topText.y = Math.max(20, frameY - 70);
+  topText.y = Math.max(16, frameY - 64);
 
-  // HUD bas
-  const spaceBelowFrame = h - (frameY + frameH);
-  const safeSpace = Math.max(spaceBelowFrame, 160);
+  // HUD (solde / mise / dernier gain) juste au-dessus des boutons
+  const hudY = h - bottomMargin + 30;
 
-  const hudY = frameY + frameH + safeSpace * 0.2;
   hudBalanceText.x = 20;
   hudBetText.x = w / 2;
   hudLastWinText.x = w - 20;
+
   hudBalanceText.y = hudBetText.y = hudLastWinText.y = hudY;
 
-  // --- Boutons SPIN / -1 / +1 (centrés & auto-scale) ---
-  const btnY = frameY + frameH + safeSpace * 0.45;
+  // boutons au-dessus de la barre du navigateur
+  const btnY = hudY - 80;
+  const centerX = w / 2;
 
-  // reset des échelles avant calcul
-  btnMinus.scale.set(1);
-  btnSpin.scale.set(1);
-  btnPlus.scale.set(1);
-
-  const baseSpacing = 40;
-  const rawWidth =
-    btnMinus.width + btnSpin.width + btnPlus.width + 2 * baseSpacing;
-
-  let scale = 1;
-  const maxButtonsWidth = w * 0.9; // on laisse 5% de marge à gauche/droite
-  if (rawWidth > maxButtonsWidth) {
-    scale = maxButtonsWidth / rawWidth;
-  }
-
-  btnMinus.scale.set(scale);
-  btnSpin.scale.set(scale);
-  btnPlus.scale.set(scale);
-
-  const spacing = baseSpacing * scale;
-  const minusW = btnMinus.width;
-  const spinW = btnSpin.width;
-  const plusW = btnPlus.width;
-
-  const totalButtonsWidth = minusW + spinW + plusW + 2 * spacing;
-  const startX = (w - totalButtonsWidth) / 2;
-
-  btnMinus.x = startX;
-  btnMinus.y = btnY;
-
-  btnSpin.x = btnMinus.x + minusW + spacing;
+  btnSpin.x = centerX - btnSpin.width / 2;
   btnSpin.y = btnY;
 
-  btnPlus.x = btnSpin.x + spinW + spacing;
+  const spacing = 40;
+  btnMinus.x = btnSpin.x - btnMinus.width - spacing;
+  btnMinus.y = btnY;
+
+  btnPlus.x = btnSpin.x + btnSpin.width + spacing;
   btnPlus.y = btnY;
 
-  // bouton INFO
-  let infoY = btnY + btnInfo.height + 20;
-  if (infoY + btnInfo.height > h - 10) {
-    infoY = h - btnInfo.height - 10;
-  }
-  btnInfo.x = w / 2 - btnInfo.width / 2;
-  btnInfo.y = infoY;
+  // bouton INFO sous SPIN mais encore bien au-dessus du bas de l’écran
+  btnInfo.x = centerX - btnInfo.width / 2;
+  btnInfo.y = Math.min(h - btnInfo.height - 12, btnY + btnInfo.height + 18);
 
-  // overlay d’info
+  // overlay de la table des gains (s’adapte à la nouvelle taille)
   updateInfoOverlayLayout();
 }
 
