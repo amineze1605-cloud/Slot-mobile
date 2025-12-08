@@ -467,15 +467,14 @@ function fillPaytableText() {
 function layoutUI() {
   if (!app || !slotContainer || !reels.length) return;
 
-  // IMPORTANT : utiliser la taille "écran" (CSS), pas le buffer interne
-  const w = app.renderer.screen.width;
-  const h = app.renderer.screen.height;
+  const w = app.renderer.width;
+  const h = app.renderer.height;
 
-  // marges haut/bas pour éviter que ça déborde sur les très petits écrans
-  const topMargin = 110;     // zone pour le texte et la barre système
-  const bottomMargin = 230;  // zone pour HUD + boutons
+  // marges pour ne pas toucher la barre du haut / bas
+  const topMargin = 110;
+  const bottomMargin = 230;
 
-  const maxSymbolByWidth = (w * 0.8) / COLS; // on garde ~80% de la largeur pour les rouleaux
+  const maxSymbolByWidth = (w * 0.8) / COLS;
   const availableHeightForReels = Math.max(h - topMargin - bottomMargin, 200);
   const maxSymbolByHeight = (availableHeightForReels / ROWS) * 0.8;
 
@@ -504,7 +503,6 @@ function layoutUI() {
   const totalReelW = reelWidth * COLS - reelGap;
   const totalReelH = ROWS * (symbolSize + rowGap) - rowGap;
 
-  // centre les rouleaux dans l'espace autorisé
   const reelsAreaTop = topMargin;
   const slotY = reelsAreaTop + (availableHeightForReels - totalReelH) / 2;
 
@@ -523,42 +521,68 @@ function layoutUI() {
   frameGfx.lineStyle(8, 0xffc247, 1);
   frameGfx.drawRoundedRect(frameX, frameY, frameW, frameH, 28);
 
-  // message haut
+  // texte du haut
   topText.x = w / 2;
   topText.y = Math.max(20, frameY - 70);
 
-  // espace sous le cadre
+  // HUD bas
   const spaceBelowFrame = h - (frameY + frameH);
   const safeSpace = Math.max(spaceBelowFrame, 160);
 
-  // HUD bas
   const hudY = frameY + frameH + safeSpace * 0.2;
   hudBalanceText.x = 20;
   hudBetText.x = w / 2;
   hudLastWinText.x = w - 20;
   hudBalanceText.y = hudBetText.y = hudLastWinText.y = hudY;
 
-  // boutons
+  // --- Boutons SPIN / -1 / +1 (centrés & auto-scale) ---
   const btnY = frameY + frameH + safeSpace * 0.45;
-  const centerX = w / 2;
 
-  btnSpin.x = centerX - btnSpin.width / 2;
-  btnSpin.y = btnY;
+  // reset des échelles avant calcul
+  btnMinus.scale.set(1);
+  btnSpin.scale.set(1);
+  btnPlus.scale.set(1);
 
-  const spacing = 40;
-  btnMinus.x = btnSpin.x - btnMinus.width - spacing;
+  const baseSpacing = 40;
+  const rawWidth =
+    btnMinus.width + btnSpin.width + btnPlus.width + 2 * baseSpacing;
+
+  let scale = 1;
+  const maxButtonsWidth = w * 0.9; // on laisse 5% de marge à gauche/droite
+  if (rawWidth > maxButtonsWidth) {
+    scale = maxButtonsWidth / rawWidth;
+  }
+
+  btnMinus.scale.set(scale);
+  btnSpin.scale.set(scale);
+  btnPlus.scale.set(scale);
+
+  const spacing = baseSpacing * scale;
+  const minusW = btnMinus.width;
+  const spinW = btnSpin.width;
+  const plusW = btnPlus.width;
+
+  const totalButtonsWidth = minusW + spinW + plusW + 2 * spacing;
+  const startX = (w - totalButtonsWidth) / 2;
+
+  btnMinus.x = startX;
   btnMinus.y = btnY;
 
-  btnPlus.x = btnSpin.x + btnSpin.width + spacing;
+  btnSpin.x = btnMinus.x + minusW + spacing;
+  btnSpin.y = btnY;
+
+  btnPlus.x = btnSpin.x + spinW + spacing;
   btnPlus.y = btnY;
 
+  // bouton INFO
   let infoY = btnY + btnInfo.height + 20;
   if (infoY + btnInfo.height > h - 10) {
     infoY = h - btnInfo.height - 10;
   }
-  btnInfo.x = centerX - btnInfo.width / 2;
+  btnInfo.x = w / 2 - btnInfo.width / 2;
   btnInfo.y = infoY;
 
+  // overlay d’info
   updateInfoOverlayLayout();
 }
 
