@@ -42,25 +42,25 @@ const ROWS = 3;
 // 1 = pastèque
 // 2 = pomme
 // 3 = citron
-// 4 = cartes
+// 4 = symboles carte
 // 5 = pièce
 // 6 = couronne
 // 7 = bar
 // 8 = sept
 // 9 = triple sept
-// 10 = wild (joker)
+// 10 = wild
 // 11 = bonus
 const PAYTABLE = {
-  0: { 3: 2, 4: 3, 5: 4 },
-  1: { 3: 2, 4: 3, 5: 4 },
-  2: { 3: 2, 4: 3, 5: 4 },
-  3: { 3: 2, 4: 3, 5: 4 },
-  4: { 3: 3, 4: 4, 5: 5 },
-  5: { 3: 4, 4: 5, 5: 6 },
-  6: { 3: 10, 4: 12, 5: 14 },
-  7: { 3: 16, 4: 18, 5: 20 },
-  8: { 3: 20, 4: 25, 5: 30 },
-  9: { 3: 30, 4: 40, 5: 50 },
+  0: { 3: 2, 4: 3, 5: 4 },    // cerise
+  1: { 3: 2, 4: 3, 5: 4 },    // pastèque
+  2: { 3: 2, 4: 3, 5: 4 },    // pomme
+  3: { 3: 2, 4: 3, 5: 4 },    // citron
+  4: { 3: 3, 4: 4, 5: 5 },    // cartes
+  5: { 3: 4, 4: 5, 5: 6 },    // pièce
+  6: { 3: 10, 4: 12, 5: 14 }, // couronne
+  7: { 3: 16, 4: 18, 5: 20 }, // BAR
+  8: { 3: 20, 4: 25, 5: 30 }, // 7
+  9: { 3: 30, 4: 40, 5: 50 }, // 777
 };
 
 // 5 lignes : 3 horizontales + 2 diagonales (classique 5-lignes)
@@ -108,7 +108,7 @@ const PAYLINES = [
 ];
 
 // --------------------------------------------------
-// VARIABLES GLOBALes
+// VARIABLES GLOBALES
 // --------------------------------------------------
 let app;
 let symbolTextures = [];
@@ -120,7 +120,6 @@ let lastWin = 0;
 let spinning = false;
 
 let freeSpins = 0;
-let winMultiplier = 1;
 
 // UI PIXI
 let topText;
@@ -235,6 +234,9 @@ async function initPixi() {
 }
 
 function buildScene() {
+  const w = app.renderer.width;
+  const h = app.renderer.height;
+
   // message du haut
   topText = new PIXI.Text("Appuyez sur SPIN pour lancer", {
     fontFamily: "system-ui",
@@ -378,7 +380,7 @@ function buildInfoOverlay() {
 function updateInfoOverlayLayout() {
   if (!infoOverlay) return;
 
-  infoOverlay.removeChildren(1); // garde le bg
+  infoOverlay.removeChildren(1); // garde le bg, on reconstruit panel + textes + bouton
   const bg = infoOverlay.children[0];
 
   bg.clear();
@@ -439,8 +441,8 @@ function layoutUI() {
   const w = app.renderer.width;
   const h = app.renderer.height;
 
-  // taille symboles (un peu plus petit pour tout faire rentrer)
-  const symbolSize = Math.min(w * 0.155, h * 0.155);
+  // taille symboles
+  const symbolSize = Math.min(w * 0.16, h * 0.16);
   const reelGap = symbolSize * 0.08;
   const rowGap = symbolSize * 0.12;
   const reelWidth = symbolSize + reelGap;
@@ -535,125 +537,98 @@ function getTextureByIndex(index) {
 // --------------------------------------------------
 // ÉVALUATION DES LIGNES
 // --------------------------------------------------
+
 /**
  * Évalue toutes les lignes :
- * - gains pour toute séquence de 3+ symboles identiques qui se suivent
- *   n'importe où sur la ligne (pas seulement à partir de la 1re colonne)
+ * - On cherche la meilleure chaîne de 3, 4 ou 5 symboles consécutifs
+ *   sur chaque ligne (peut commencer n'importe où).
  * - symboles payants : IDs 0..9
- * - WILD (10) agit comme joker dans la séquence
- * - BONUS (11) ne paye pas, sert seulement pour les free spins
+ * - WILD (10) remplace n'importe lequel (sauf BONUS)
+ * - BONUS (11) ne paye pas mais sert pour déclencher le mode bonus.
  */
 function evaluateGrid(grid, currentBet) {
   let totalWin = 0;
-  const winningLines = []; // { lineIndex, startIndex, count }
+  const winningLines = []; // { lineIndex, count, startIndex }
   let bonusCount = 0;
 
-  // compter les bonus globalement
+  // compter les bonus pour le mode bonus
   for (let r = 0; r < ROWS; r++) {
     for (let c = 0; c < COLS; c++) {
       if (grid[r][c] === 11) bonusCount++;
     }
   }
 
-  // pour chaque ligne de paiement
+  // pour chaque ligne de PAYLINES
   for (let li = 0; li < PAYLINES.length; li++) {
     const coords = PAYLINES[li];
 
+    let bestWinForLine = 0;
     let bestCount = 0;
-    let bestSymbol = null;
-    let bestStart = 0;
+    let bestStartIndex = 0;
 
-    let currentSymbol = null; // symbole de base (0..9) ou "wild-pending"
-    let currentCount = 0;
-    let currentStart = 0;
-    let hasRealBase = false; // au moins un symbole non-wild dans la chaîne
+    // on teste tous les points de départ possibles (0,1,2)
+    for (let start = 0; start <= coords.length - 3; start++) {
+      let base = null; // symbole de base (0..9)
+      let count = 0;
+      let valid = true;
 
-    // scan de gauche à droite
-    for (let i = 0; i < coords.length; i++) {
-      const [r, c] = coords[i];
-      const sym = grid[r][c];
+      for (let i = start; i < coords.length; i++) {
+        const [r, c] = coords[i];
+        const sym = grid[r][c];
 
-      if (sym === 11) {
-        // BONUS : coupe la chaîne
-        if (hasRealBase && currentCount >= 3 && currentSymbol >= 0 && currentSymbol <= 9) {
-          if (currentCount > bestCount) {
-            bestCount = currentCount;
-            bestSymbol = currentSymbol;
-            bestStart = currentStart;
-          }
+        if (sym === 11) {
+          // BONUS coupe la chaîne
+          break;
         }
-        currentSymbol = null;
-        currentCount = 0;
-        hasRealBase = false;
-        continue;
-      }
 
-      if (sym === 10) {
-        // WILD
-        if (currentSymbol === null) {
-          // on commence une chaîne "en attente" de base
-          currentSymbol = "wild-pending";
-          currentStart = i;
-          currentCount = 1;
-          hasRealBase = false;
+        if (base === null) {
+          // pas encore de symbole de base
+          if (sym === 10) {
+            // WILD avant d'avoir le symbole, on le compte
+            count++;
+            continue;
+          } else {
+            // premier symbole non-wild, non-bonus
+            if (sym < 0 || sym > 9) {
+              valid = false;
+              break;
+            }
+            base = sym;
+            count++;
+            continue;
+          }
         } else {
-          currentCount++;
-        }
-        continue;
-      }
-
-      // sym est un symbole payant 0..9
-      if (currentSymbol === null) {
-        currentSymbol = sym;
-        currentStart = i;
-        currentCount = 1;
-        hasRealBase = true;
-      } else if (currentSymbol === "wild-pending") {
-        // on convertit toute la chaîne précédente (wilds) sur ce symbole
-        currentSymbol = sym;
-        currentCount++;
-        hasRealBase = true;
-      } else if (sym === currentSymbol) {
-        currentCount++;
-        hasRealBase = true;
-      } else {
-        // on clôt la chaîne précédente
-        if (hasRealBase && currentCount >= 3 && currentSymbol >= 0 && currentSymbol <= 9) {
-          if (currentCount > bestCount) {
-            bestCount = currentCount;
-            bestSymbol = currentSymbol;
-            bestStart = currentStart;
+          // base déjà défini
+          if (sym === base || sym === 10) {
+            count++;
+          } else {
+            break;
           }
         }
-        // nouvelle chaîne à partir de ce symbole
-        currentSymbol = sym;
-        currentStart = i;
-        currentCount = 1;
-        hasRealBase = true;
-      }
-    }
+      } // fin boucle i
 
-    // on vérifie la dernière chaîne
-    if (hasRealBase && currentCount >= 3 && currentSymbol >= 0 && currentSymbol <= 9) {
-      if (currentCount > bestCount) {
-        bestCount = currentCount;
-        bestSymbol = currentSymbol;
-        bestStart = currentStart;
-      }
-    }
+      if (!valid) continue;
+      if (base === null) continue; // que des wilds / bonus, pas de symbole réel
 
-    if (bestSymbol !== null && bestCount >= 3) {
-      const table = PAYTABLE[bestSymbol];
-      const mult = table && table[bestCount] ? table[bestCount] : 0;
-      if (mult > 0) {
-        const lineWin = currentBet * mult;
-        totalWin += lineWin;
-        winningLines.push({
-          lineIndex: li,
-          startIndex: bestStart,
-          count: bestCount,
-        });
+      if (count >= 3) {
+        const table = PAYTABLE[base];
+        const mult = table && table[count] ? table[count] : 0;
+        const win = mult * currentBet;
+        if (win > bestWinForLine) {
+          bestWinForLine = win;
+          bestCount = count;
+          bestStartIndex = start;
+        }
       }
+    } // fin boucle start
+
+    if (bestWinForLine > 0) {
+      totalWin += bestWinForLine;
+      winningLines.push({
+        lineIndex: li,
+        count: bestCount,
+        startIndex: bestStartIndex,
+      });
     }
   }
 
@@ -682,9 +657,8 @@ function highlightWinningLines(winningLines) {
   winningLines.forEach((info) => {
     const coords = PAYLINES[info.lineIndex];
     const start = info.startIndex || 0;
-    const count = info.count || 0;
-
-    for (let i = start; i < start + count && i < coords.length; i++) {
+    const end = Math.min(start + info.count, coords.length);
+    for (let i = start; i < end; i++) {
       const [r, c] = coords[i];
       const reel = reels[c];
       if (reel && reel.symbols[r]) {
@@ -753,11 +727,16 @@ async function onSpinClick() {
 
   let effectiveBet = bet;
   let paidSpin = true;
+  let wasFreeSpin = false;
 
   if (freeSpins > 0) {
+    // spin gratuit
     paidSpin = false;
-    freeSpins--;
+    wasFreeSpin = true;
+    effectiveBet = bet;
+    freeSpins--; // on consomme un free spin
   } else {
+    // spin normal
     if (balance < bet) {
       setTopMessage("Solde insuffisant");
       spinning = false;
@@ -766,16 +745,13 @@ async function onSpinClick() {
     balance -= bet;
   }
 
-  // mettre à jour le multiplicateur en fonction des free spins restants
-  winMultiplier = freeSpins > 0 ? 2 : 1;
-
   lastWin = 0;
   updateHudTexts();
   playSound("spin");
   setTopMessage(
-    paidSpin
-      ? "Bonne chance !"
-      : `Free spin… restants : ${freeSpins}`
+    wasFreeSpin
+      ? `Free spin… restants : ${freeSpins}`
+      : "Bonne chance !"
   );
 
   try {
@@ -784,6 +760,7 @@ async function onSpinClick() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ bet: effectiveBet }),
     });
+
     const data = await response.json();
     const grid = data.result || data.grid || data;
 
@@ -791,23 +768,21 @@ async function onSpinClick() {
 
     // on évalue nous-mêmes la grille
     const evalRes = evaluateGrid(grid, effectiveBet);
-    let totalWin = evalRes.baseWin;
 
-    // gestion bonus
+    // multiplicateur : x2 uniquement quand le spin est gratuit
+    const spinMultiplier = wasFreeSpin ? 2 : 1;
+    let totalWin = evalRes.baseWin * spinMultiplier;
+
+    // gestion bonus (3+ bonus n'importe où)
     if (evalRes.bonusTriggered) {
       freeSpins += 10;
-      winMultiplier = 2;
-    }
-
-    if (winMultiplier > 1) {
-      totalWin *= winMultiplier;
     }
 
     lastWin = totalWin;
     balance += totalWin;
 
     highlightWinningLines(evalRes.winningLines);
-    finishSpin(totalWin, evalRes.bonusTriggered);
+    finishSpin(totalWin, evalRes.bonusTriggered, wasFreeSpin);
   } catch (err) {
     console.error("Erreur API /spin", err);
     showMessage("Erreur JS : API");
@@ -816,15 +791,9 @@ async function onSpinClick() {
   }
 }
 
-function finishSpin(winAmount, bonusTriggered) {
+function finishSpin(winAmount, bonusTriggered, wasFreeSpin) {
   spinning = false;
   updateHudTexts();
-
-  if (bonusTriggered) {
-    playSound("bonus");
-    setTopMessage("BONUS ! +10 free spins (gains ×2)");
-    return;
-  }
 
   if (winAmount > 0) {
     playSound("win");
@@ -840,6 +809,11 @@ function finishSpin(winAmount, bonusTriggered) {
     } else {
       setTopMessage("Pas de gain — appuyez sur SPIN pour relancer");
     }
+  }
+
+  if (bonusTriggered) {
+    playSound("bonus");
+    setTopMessage("BONUS ! +10 free spins (gains ×2)");
   }
 }
 
