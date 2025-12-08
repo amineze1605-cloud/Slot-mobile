@@ -385,12 +385,12 @@ function buildInfoOverlay() {
 }
 
 function updateInfoOverlayLayout() {
-  if (!infoOverlay || !app) return;
+  if (!infoOverlay) return;
 
-  const w = app.renderer.screen.width;
-  const h = app.renderer.screen.height;
+  const w = app.renderer.width;
+  const h = app.renderer.height;
 
-  // BG semi-transparent
+  // --- fond semi-transparent plein écran ---
   const bg = infoOverlay.children[0];
   if (bg && bg.clear) {
     bg.clear();
@@ -399,7 +399,7 @@ function updateInfoOverlayLayout() {
     bg.endFill();
   }
 
-  // panel
+  // --- panneau central ---
   if (!infoPanel) {
     infoPanel = new PIXI.Graphics();
     infoOverlay.addChild(infoPanel);
@@ -407,8 +407,9 @@ function updateInfoOverlayLayout() {
     infoPanel.clear();
   }
 
+  const smallScreen = h < 750;          // iPhone / petits écrans
   const panelW = w * 0.9;
-  const panelH = h * 0.7;
+  const panelH = smallScreen ? h * 0.6 : h * 0.7;
   const panelX = (w - panelW) / 2;
   const panelY = (h - panelH) / 2;
 
@@ -417,16 +418,28 @@ function updateInfoOverlayLayout() {
   infoPanel.drawRoundedRect(panelX, panelY, panelW, panelH, 26);
   infoPanel.endFill();
 
+  // --- texte ---
   if (infoText) {
     infoText.x = w / 2;
     infoText.y = panelY + 24;
+
+    // adapter la taille de la police pour que tout rentre
+    infoText.style.fontSize = smallScreen ? 18 : 22;
+    infoText.style.lineHeight = smallScreen ? 22 : 28;
     infoText.style.wordWrapWidth = panelW - 40;
   }
 
+  // --- bouton FERMER ---
   if (!infoOverlay.btnClose) return;
   const btnClose = infoOverlay.btnClose;
+
   btnClose.x = w / 2 - btnClose.width / 2;
-  btnClose.y = panelY + panelH - btnClose.height - 20;
+  btnClose.y = panelY + panelH - btnClose.height - 16;
+
+  // sécurité : si jamais il touche encore le bas, on le remonte un peu
+  if (btnClose.y + btnClose.height > h - 10) {
+    btnClose.y = h - btnClose.height - 10;
+  }
 }
 
 function fillPaytableText() {
