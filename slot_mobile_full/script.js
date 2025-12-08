@@ -36,23 +36,53 @@ function playSound(name) {
 const COLS = 5;
 const ROWS = 3;
 
-// paytable : multiplicateurs par ID et par longueur de chaîne
+// IDs spéciaux
+const WILD_ID = 9;   // WILD
+const BONUS_ID = 6;  // BONUS
+
+// PAYTABLE : multiplicateurs par ID et par longueur de chaîne
+// Mapping spritesheet que tu as donné :
+// 0 - 777
+// 1 - pastèque
+// 2 - BAR
+// 3 - pomme
+// 4 - cartes
+// 5 - couronne
+// 6 - bonus
+// 7 - cerises
+// 8 - pièce
+// 9 - wild
+// 10 - citron
+// 11 - 7
 const PAYTABLE = {
-  0: { 3: 2, 4: 3, 5: 4 },    // cerise
-  1: { 3: 2, 4: 3, 5: 4 },    // pastèque
-  2: { 3: 2, 4: 3, 5: 4 },    // pomme
-  3: { 3: 2, 4: 3, 5: 4 },    // citron
-  4: { 3: 3, 4: 4, 5: 5 },    // cartes
-  5: { 3: 4, 4: 5, 5: 6 },    // pièce
-  6: { 3: 10, 4: 12, 5: 14 }, // couronne
-  7: { 3: 16, 4: 18, 5: 20 }, // BAR
-  8: { 3: 20, 4: 25, 5: 30 }, // 7
-  9: { 3: 30, 4: 40, 5: 50 }, // 777
+  // Fruits (pastèque, pomme, cerises, citron)
+  1: { 3: 2, 4: 3, 5: 4 },   // pastèque
+  3: { 3: 2, 4: 3, 5: 4 },   // pomme
+  7: { 3: 2, 4: 3, 5: 4 },   // cerises
+  10: { 3: 2, 4: 3, 5: 4 },  // citron
+
+  // Cartes
+  4: { 3: 3, 4: 4, 5: 5 },
+
+  // Pièce
+  8: { 3: 4, 4: 5, 5: 6 },
+
+  // Couronne
+  5: { 3: 10, 4: 12, 5: 14 },
+
+  // BAR
+  2: { 3: 16, 4: 18, 5: 20 },
+
+  // 7 rouge
+  11: { 3: 20, 4: 25, 5: 30 },
+
+  // 777 violet
+  0: { 3: 30, 4: 40, 5: 50 },
 };
 
 // 5 lignes : 3 horizontales + 2 diagonales (classique 5-lignes)
 const PAYLINES = [
-  // 0 : rangée du haut
+  // 0 : rangée du haut (gauche -> droite)
   [
     [0, 0],
     [0, 1],
@@ -200,12 +230,7 @@ async function initPixi() {
     symbolTextures = [];
     for (let r = 0; r < ROWS_SHEET; r++) {
       for (let c = 0; c < COLS_SHEET; c++) {
-        const rect = new PIXI.Rectangle(
-          c * frameW,
-          r * frameH,
-          frameW,
-          frameH
-        );
+        const rect = new PIXI.Rectangle(c * frameW, r * frameH, frameW, frameH);
         const tex = new PIXI.Texture(baseTexture, rect);
         symbolTextures.push(tex);
       }
@@ -370,7 +395,7 @@ function buildInfoOverlay() {
 function updateInfoOverlayLayout() {
   if (!infoOverlay) return;
 
-  infoOverlay.removeChildren(1); // garde le bg, on reconstruit le reste
+  infoOverlay.removeChildren(1); // garde le bg
   const bg = infoOverlay.children[0];
 
   bg.clear();
@@ -409,15 +434,18 @@ function updateInfoOverlayLayout() {
 function fillPaytableText() {
   const txt =
     "Table des gains\n\n" +
-    "0–3 : 2× | 4 : 3× | 5 : 4×\n" +
-    "4 (cartes) : 3× / 4× / 5×\n" +
-    "5 (pièce) : 4× / 5× / 6×\n" +
-    "6 (couronne) : 10× / 12× / 14×\n" +
-    "7 (BAR) : 16× / 18× / 20×\n" +
-    "8 (7) : 20× / 25× / 30×\n" +
-    "9 (777) : 30× / 40× / 50×\n\n" +
-    "10 (WILD) : remplace tout sauf BONUS\n" +
-    "11 (BONUS) : 3+ = 10 free spins, gains ×2";
+    "Fruits (pastèque, pomme, cerises, citron) :\n" +
+    "  3 symboles : 2× la mise\n" +
+    "  4 symboles : 3× la mise\n" +
+    "  5 symboles : 4× la mise\n\n" +
+    "Cartes : 3× / 4× / 5× la mise\n" +
+    "Pièce : 4× / 5× / 6× la mise\n" +
+    "Couronne : 10× / 12× / 14× la mise\n" +
+    "BAR : 16× / 18× / 20× la mise\n" +
+    "7 rouge : 20× / 25× / 30× la mise\n" +
+    "777 violet : 30× / 40× / 50× la mise\n\n" +
+    "WILD : remplace tout sauf BONUS\n" +
+    "BONUS : 3 ou + = 10 free spins, gains ×2";
 
   infoText.text = txt;
 }
@@ -525,87 +553,84 @@ function getTextureByIndex(index) {
 }
 
 // --------------------------------------------------
-// ÉVALUATION DES LIGNES (gauche → droite uniquement)
+// ÉVALUATION DES LIGNES
 // --------------------------------------------------
+
+/**
+ * Évalue toutes les lignes :
+ * - gain uniquement si 3+ symboles identiques consécutifs depuis la colonne 0
+ *   (gauche vers droite sur la payline)
+ * - WILD (WILD_ID) remplace n'importe quel symbole payant
+ * - BONUS (BONUS_ID) ne paie pas, sert uniquement à déclencher les free spins
+ */
 function evaluateGrid(grid, currentBet) {
   let totalWin = 0;
   const winningLines = []; // { lineIndex, count }
   let bonusCount = 0;
 
-  // Compter les BONUS pour les free spins
+  // compter les BONUS partout sur la grille
   for (let r = 0; r < ROWS; r++) {
     for (let c = 0; c < COLS; c++) {
-      if (grid[r][c] === 11) bonusCount++;
+      if (grid[r][c] === BONUS_ID) bonusCount++;
     }
   }
 
-  // Parcourir les 5 lignes de paiement
+  // pour chaque ligne
   for (let li = 0; li < PAYLINES.length; li++) {
     const coords = PAYLINES[li];
-    const symbols = coords.map(([r, c]) => grid[r][c]);
 
-    const res = evaluateLineLeftToRight(symbols);
-    if (!res) continue;
+    // 1) trouver le premier symbole non-WILD, non-BONUS en partant de la gauche
+    let base = null;
+    let bonusBeforeBase = false;
 
-    const { base, count } = res;
-    const table = PAYTABLE[base];
-    if (!table) continue;
+    for (let i = 0; i < coords.length; i++) {
+      const [r, c] = coords[i];
+      const sym = grid[r][c];
 
-    const mult = table[count] || 0;
-    if (mult > 0) {
-      const lineWin = currentBet * mult;
-      totalWin += lineWin;
-      winningLines.push({ lineIndex: li, count });
+      if (sym === BONUS_ID) {
+        // un BONUS avant d'avoir trouvé la base annule cette ligne
+        bonusBeforeBase = true;
+        break;
+      }
+      if (sym !== WILD_ID) {
+        base = sym;
+        break;
+      }
+    }
+
+    if (bonusBeforeBase || base === null) continue;
+    if (!PAYTABLE.hasOwnProperty(base)) continue; // le symbole n'a pas de gains
+
+    // 2) compter les symboles consécutifs depuis la colonne 0
+    let count = 0;
+    for (let i = 0; i < coords.length; i++) {
+      const [r, c] = coords[i];
+      const sym = grid[r][c];
+
+      if (sym === BONUS_ID) {
+        // BONUS coupe la ligne
+        break;
+      }
+      if (sym === base || sym === WILD_ID) {
+        count++;
+      } else {
+        break;
+      }
+    }
+
+    if (count >= 3) {
+      const table = PAYTABLE[base];
+      const mult = table && table[count] ? table[count] : 0;
+      if (mult > 0) {
+        const lineWin = currentBet * mult;
+        totalWin += lineWin;
+        winningLines.push({ lineIndex: li, count });
+      }
     }
   }
 
   const bonusTriggered = bonusCount >= 3;
   return { baseWin: totalWin, winningLines, bonusTriggered };
-}
-
-/**
- * Ligne gagnante uniquement si la suite commence en colonne 0.
- * - WILD (10) peut remplacer la base.
- * - BONUS (11) casse la ligne.
- * - Il faut au moins 3 symboles consécutifs.
- */
-function evaluateLineLeftToRight(symbols) {
-  let base = null;
-  let count = 0;
-
-  for (let i = 0; i < symbols.length; i++) {
-    const sym = symbols[i];
-
-    if (sym === 11) {
-      // BONUS stoppe la ligne
-      break;
-    }
-
-    if (base === null) {
-      // Début de ligne
-      if (sym === 10) {
-        // WILD en tête : compte, mais base pas encore définie
-        count++;
-      } else if (sym >= 0 && sym <= 9) {
-        base = sym;
-        count++;
-      } else {
-        break;
-      }
-    } else {
-      // Base déjà trouvée
-      if (sym === 10 || sym === base) {
-        count++;
-      } else {
-        break;
-      }
-    }
-  }
-
-  if (base !== null && count >= 3) {
-    return { base, count };
-  }
-  return null;
 }
 
 // --------------------------------------------------
@@ -626,6 +651,7 @@ function highlightWinningLines(winningLines) {
   clearHighlights();
   if (!winningLines || !winningLines.length) return;
 
+  // récupérer les sprites correspondants
   winningLines.forEach((info) => {
     const coords = PAYLINES[info.lineIndex];
     for (let i = 0; i < info.count; i++) {
@@ -640,7 +666,7 @@ function highlightWinningLines(winningLines) {
   let t = 0;
   highlightTicker = (delta) => {
     t += delta;
-    const phase = Math.floor(t / 6) % 2;
+    const phase = Math.floor(t / 6) % 2; // clignote doucement
     const alpha = phase === 0 ? 1 : 0.25;
     highlightedSprites.forEach((s) => {
       if (s) s.alpha = alpha;
@@ -692,6 +718,11 @@ async function onSpinClick() {
   if (spinning) return;
   if (!app || !symbolTextures.length) return;
 
+  // si plus de free spins, on remet le multiplicateur à 1
+  if (freeSpins === 0) {
+    winMultiplier = 1;
+  }
+
   spinning = true;
   clearHighlights();
 
@@ -699,14 +730,10 @@ async function onSpinClick() {
   let paidSpin = true;
 
   if (freeSpins > 0) {
-    // spin gratuit en cours
     paidSpin = false;
     effectiveBet = bet;
     freeSpins--;
   } else {
-    // on revient à un spin payé → multiplicateur normal
-    winMultiplier = 1;
-
     if (balance < bet) {
       setTopMessage("Solde insuffisant");
       spinning = false;
@@ -783,6 +810,11 @@ function finishSpin(winAmount, bonusTriggered) {
   if (bonusTriggered) {
     playSound("bonus");
     setTopMessage("BONUS ! +10 free spins (gains ×2)");
+  }
+
+  // si plus de free spins après ce spin, on repasse les gains à ×1
+  if (freeSpins === 0 && !bonusTriggered) {
+    winMultiplier = 1;
   }
 }
 
