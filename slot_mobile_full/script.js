@@ -454,23 +454,28 @@ function fillPaytableText() {
 function layoutUI() {
   if (!app || !slotContainer || !reels.length) return;
 
-  const w = app.renderer.width;
-  const h = app.renderer.height;
+  // IMPORTANT : utiliser la taille "écran" (CSS), pas le buffer interne
+  const w = app.renderer.screen.width;
+  const h = app.renderer.screen.height;
 
-  // 1) Taille de symbole basée sur la plus petite dimension
-  const shortestSide = Math.min(w, h);
-  let symbolSize = shortestSide / 6;      // base
-  symbolSize = Math.max(48, Math.min(symbolSize, 140)); // bornes min/max
+  // marges haut/bas pour éviter que ça déborde sur les très petits écrans
+  const topMargin = 110;     // zone pour le texte et la barre système
+  const bottomMargin = 230;  // zone pour HUD + boutons
 
-  const reelGap = symbolSize * 0.08;
-  const rowGap = symbolSize * 0.12;
+  const maxSymbolByWidth = (w * 0.8) / COLS; // on garde ~80% de la largeur pour les rouleaux
+  const availableHeightForReels = Math.max(h - topMargin - bottomMargin, 200);
+  const maxSymbolByHeight = (availableHeightForReels / ROWS) * 0.8;
+
+  const symbolSize = Math.max(
+    40,
+    Math.min(maxSymbolByWidth, maxSymbolByHeight)
+  );
+
+  const reelGap = symbolSize * 0.12;
+  const rowGap = symbolSize * 0.18;
   const reelWidth = symbolSize + reelGap;
 
-  // 2) Taille totale des rouleaux
-  const totalReelW = reelWidth * COLS - reelGap;
-  const totalReelH = ROWS * (symbolSize + rowGap) - rowGap;
-
-  // 3) Positionner les sprites dans chaque rouleau
+  // position des symboles
   for (let c = 0; c < COLS; c++) {
     const reel = reels[c];
     reel.container.x = c * reelWidth;
@@ -483,44 +488,45 @@ function layoutUI() {
     }
   }
 
-  // 4) Centrage horizontal et placement vertical du cadre
+  const totalReelW = reelWidth * COLS - reelGap;
+  const totalReelH = ROWS * (symbolSize + rowGap) - rowGap;
+
+  // centre les rouleaux dans l'espace autorisé
+  const reelsAreaTop = topMargin;
+  const slotY = reelsAreaTop + (availableHeightForReels - totalReelH) / 2;
+
   slotContainer.x = (w - totalReelW) / 2;
+  slotContainer.y = Math.max(80, slotY);
 
-  const framePaddingX = symbolSize * 0.35;
-  const framePaddingY = symbolSize * 0.35;
-  const frameH = totalReelH + framePaddingY * 2;
-
-  // On vise ~18% du haut pour le cadre
-  let frameTop = h * 0.18;
-
-  // Si le bas du cadre dépasse 70% de l'écran, on remonte un peu
-  if (frameTop + frameH > h * 0.7) {
-    frameTop = h * 0.7 - frameH;
-  }
-  if (frameTop < 60) frameTop = 60;
-
-  slotContainer.y = frameTop + framePaddingY;
-
+  // cadre autour
   frameGfx.clear();
-  const frameX = slotContainer.x - framePaddingX;
-  const frameY = frameTop;
-  const frameW = totalReelW + framePaddingX * 2;
+  const padX = symbolSize * 0.35;
+  const padY = symbolSize * 0.35;
+  const frameX = slotContainer.x - padX;
+  const frameY = slotContainer.y - padY;
+  const frameW = totalReelW + padX * 2;
+  const frameH = totalReelH + padY * 2;
+
   frameGfx.lineStyle(8, 0xffc247, 1);
   frameGfx.drawRoundedRect(frameX, frameY, frameW, frameH, 28);
 
-  // 5) Texte du haut
+  // message haut
   topText.x = w / 2;
-  topText.y = Math.max(20, frameY - symbolSize * 0.9);
+  topText.y = Math.max(20, frameY - 70);
 
-  // 6) HUD juste sous le cadre
-  const hudY = frameY + frameH + symbolSize * 0.4;
+  // espace sous le cadre
+  const spaceBelowFrame = h - (frameY + frameH);
+  const safeSpace = Math.max(spaceBelowFrame, 160);
+
+  // HUD bas
+  const hudY = frameY + frameH + safeSpace * 0.2;
   hudBalanceText.x = 20;
   hudBetText.x = w / 2;
   hudLastWinText.x = w - 20;
   hudBalanceText.y = hudBetText.y = hudLastWinText.y = hudY;
 
-  // 7) Boutons SPIN / -1 / +1
-  const btnY = hudY + symbolSize * 0.8;
+  // boutons
+  const btnY = frameY + frameH + safeSpace * 0.45;
   const centerX = w / 2;
 
   btnSpin.x = centerX - btnSpin.width / 2;
@@ -533,15 +539,13 @@ function layoutUI() {
   btnPlus.x = btnSpin.x + btnSpin.width + spacing;
   btnPlus.y = btnY;
 
-  // 8) Bouton INFO en dessous, mais on s'assure qu'il reste dans l'écran
-  let infoY = btnY + btnSpin.height + symbolSize * 0.3;
+  let infoY = btnY + btnInfo.height + 20;
   if (infoY + btnInfo.height > h - 10) {
     infoY = h - btnInfo.height - 10;
   }
   btnInfo.x = centerX - btnInfo.width / 2;
   btnInfo.y = infoY;
 
-  // 9) Recalage de l'overlay paytable
   updateInfoOverlayLayout();
 }
 
