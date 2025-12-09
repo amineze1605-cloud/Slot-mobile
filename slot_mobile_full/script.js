@@ -448,8 +448,9 @@ function createPaytableOverlay() {
 
   const container = new PIXI.Container();
   container.visible = false;
-  container.interactive = true;
+  container.interactive = true; // bloque les clics sur le jeu pendant l'affichage
 
+  // fond semi-transparent plein écran
   const backdrop = new PIXI.Graphics();
   backdrop.beginFill(0x000000, 0.75);
   backdrop.drawRect(0, 0, w, h);
@@ -457,10 +458,12 @@ function createPaytableOverlay() {
   backdrop.interactive = true;
   container.addChild(backdrop);
 
+  // panneau centré (un peu plus haut qu'avant)
   const panelWidth = w * 0.86;
-  const panelHeight = h * 0.62;
+  const panelHeight = h * 0.7;
   const panelX = (w - panelWidth) / 2;
   const panelY = (h - panelHeight) / 2;
+  const marginY = h * 0.02;
 
   const panel = new PIXI.Graphics();
   panel.beginFill(0x111827);
@@ -470,6 +473,7 @@ function createPaytableOverlay() {
   panel.interactive = true;
   container.addChild(panel);
 
+  // titre
   const styleTitle = new PIXI.TextStyle({
     fontFamily: "system-ui",
     fontSize: Math.round(h * 0.035),
@@ -478,16 +482,21 @@ function createPaytableOverlay() {
   const title = new PIXI.Text("Table des gains", styleTitle);
   title.anchor.set(0.5, 0);
   title.x = w / 2;
-  title.y = panelY + h * 0.02;
+  title.y = panelY + marginY;
   container.addChild(title);
+
+  // corps du texte
+  const smallScreen = h < 750;
+  const baseFontSize = smallScreen ? Math.round(h * 0.022) : Math.round(h * 0.026);
+  const baseLineHeight = smallScreen ? Math.round(h * 0.026) : Math.round(h * 0.031);
 
   const styleBody = new PIXI.TextStyle({
     fontFamily: "system-ui",
-    fontSize: Math.round(h * 0.026),
+    fontSize: baseFontSize,
     fill: 0xffffff,
     wordWrap: true,
     wordWrapWidth: panelWidth * 0.8,
-    lineHeight: Math.round(h * 0.031),
+    lineHeight: baseLineHeight,
   });
 
   const bodyText =
@@ -507,22 +516,30 @@ function createPaytableOverlay() {
   const body = new PIXI.Text(bodyText, styleBody);
   body.anchor.set(0.5, 0);
   body.x = w / 2;
-  body.y = title.y + title.height + h * 0.02;
+  body.y = title.y + title.height + marginY;
   container.addChild(body);
 
-  const closeWidth = panelWidth * 0.35;
+  // zone disponible entre le titre et le bouton
+  const availableTextHeight = panelHeight - (title.height + marginY * 4);
   const closeHeight = h * 0.06;
+
+  // si le texte dépasse trop, on réduit la taille de police
+  if (body.height + closeHeight > availableTextHeight) {
+    const maxBodyHeight = availableTextHeight - closeHeight;
+    const scale = maxBodyHeight / body.height;
+
+    body.style.fontSize = Math.max(12, body.style.fontSize * scale * 0.95);
+    body.style.lineHeight = Math.max(14, body.style.lineHeight * scale * 0.95);
+    // Pixi mettra à jour body.height automatiquement après changement de style
+  }
+
+  // bouton FERMER en bas du panneau
+  const closeWidth = panelWidth * 0.35;
   const close = new PIXI.Container();
   const cg = new PIXI.Graphics();
   cg.beginFill(0x111827);
   cg.lineStyle(4, 0xf2b632, 1);
-  cg.drawRoundedRect(
-    -closeWidth / 2,
-    -closeHeight / 2,
-    closeWidth,
-    closeHeight,
-    16
-  );
+  cg.drawRoundedRect(-closeWidth / 2, -closeHeight / 2, closeWidth, closeHeight, 16);
   cg.endFill();
 
   const closeStyle = new PIXI.TextStyle({
@@ -535,7 +552,7 @@ function createPaytableOverlay() {
 
   close.addChild(cg, closeText);
   close.x = w / 2;
-  close.y = panelY + panelHeight - closeHeight - h * 0.02;
+  close.y = panelY + panelHeight - marginY - closeHeight / 2; // toujours DANS le cadre
   close.interactive = true;
   close.buttonMode = true;
 
