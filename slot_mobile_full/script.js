@@ -475,7 +475,7 @@ function fillPaytableText() {
 }
 
 // --------------------------------------------------
-// LAYOUT RESPONSIVE
+// LAYOUT (version comme l'ancien script qui marchait bien)
 // --------------------------------------------------
 function layoutUI() {
   if (!app || !slotContainer || !reels.length) return;
@@ -483,26 +483,16 @@ function layoutUI() {
   const w = app.renderer.width;
   const h = app.renderer.height;
 
-  // --- Taille des symboles ---
-  // On utilise ~86% de la largeur pour les rouleaux
-  const usableWidth = w * 0.86;
-  const symbolFromWidth = usableWidth / COLS;
+  // même logique que l'ancien script : symboles plus petits et cadrage propre
+  const symbolSize = Math.min(w * 0.16, h * 0.16);
+  const colGap = 8;
+  const rowGap = 8;
+  const reelWidth = symbolSize + colGap;
 
-  // On limite la hauteur des rouleaux à ~45% de l'écran
-  const maxReelsHeight = h * 0.45;
-  const symbolFromHeight = maxReelsHeight / ROWS;
-
-  // Taille finale : pas trop petite, mais clampée par largeur/hauteur
-  const symbolSize = Math.max(52, Math.min(symbolFromWidth, symbolFromHeight));
-
-  const colGap = symbolSize * 0.10;
-  const rowGap = symbolSize * 0.12;
-
-  // --- Placement des symboles ---
+  // position des symboles
   for (let c = 0; c < COLS; c++) {
     const reel = reels[c];
-    const reelX = c * (symbolSize + colGap);
-    reel.container.x = reelX;
+    reel.container.x = c * reelWidth;
 
     for (let r = 0; r < ROWS; r++) {
       const sprite = reel.symbols[r];
@@ -513,41 +503,39 @@ function layoutUI() {
     }
   }
 
-  const totalReelW = COLS * symbolSize + colGap * (COLS - 1);
-  const totalReelH = ROWS * symbolSize + rowGap * (ROWS - 1);
+  const totalReelW = reelWidth * COLS;
+  const totalReelH = ROWS * (symbolSize + rowGap) - rowGap;
 
-  // --- Texte du haut ---
+  // texte du haut comme avant
   topText.x = w / 2;
-  topText.y = 24;
+  topText.y = h * 0.10;
 
-  // --- Position des rouleaux ---
+  // conteneur des rouleaux (même position qu'avant)
   slotContainer.x = (w - totalReelW) / 2;
-  slotContainer.y = topText.y + topText.height + 24;
+  slotContainer.y = h * 0.22;
 
-  // --- Cadre jaune ---
+  // cadre autour des rouleaux (mêmes paddings que l'ancien script)
   frameGfx.clear();
-  const padX = symbolSize * 0.35;
-  const padY = symbolSize * 0.35;
-
-  const frameX = slotContainer.x - padX;
-  const frameY = slotContainer.y - padY;
-  const frameW = totalReelW + padX * 2;
-  const frameH = totalReelH + padY * 2;
+  const framePaddingX = 18;
+  const framePaddingY = 18;
+  const frameX = slotContainer.x - framePaddingX;
+  const frameY = slotContainer.y - framePaddingY;
+  const frameW = totalReelW + framePaddingX * 2;
+  const frameH = totalReelH + framePaddingY * 2;
 
   frameGfx.lineStyle(8, 0xffc247, 1);
   frameGfx.drawRoundedRect(frameX, frameY, frameW, frameH, 28);
 
-  // --- HUD (Solde / Mise / Dernier gain) ---
-  const hudY = frameY + frameH + 24;
+  // HUD (Solde / Mise / Dernier gain) sous le cadre
+  const hudY = frameY + frameH + 40;
 
-  hudBalanceText.x = 16;
+  hudBalanceText.x = 20;
   hudBetText.x = w / 2;
-  hudLastWinText.x = w - 16;
-
+  hudLastWinText.x = w - 20;
   hudBalanceText.y = hudBetText.y = hudLastWinText.y = hudY;
 
-  // --- Boutons ---
-  const btnY = hudY + 56;
+  // Boutons -1 / SPIN / +1
+  const btnY = hudY + 70;
   const centerX = w / 2;
 
   btnSpin.x = centerX - btnSpin.width / 2;
@@ -561,14 +549,14 @@ function layoutUI() {
   btnPlus.y = btnY;
 
   // Bouton INFO sous SPIN, clampé pour ne pas sortir de l'écran
-  let infoY = btnY + btnInfo.height + 18;
+  let infoY = btnY + btnInfo.height + 20;
   if (infoY + btnInfo.height > h - 10) {
     infoY = h - btnInfo.height - 10;
   }
   btnInfo.x = centerX - btnInfo.width / 2;
   btnInfo.y = infoY;
 
-  // Adapter l’overlay de la table des gains
+  // adapter la fenêtre INFO à la nouvelle géométrie
   updateInfoOverlayLayout();
 }
 
