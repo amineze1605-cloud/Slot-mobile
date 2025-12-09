@@ -505,17 +505,17 @@ function createPaytableOverlay() {
     lineHeight: baseLineHeight,
   });
 
-  const bodyText =
+    const bodyText =
     "Fruits (pastèque, pomme, cerises, citron) :\n" +
     "  3 symboles : 2× la mise\n" +
     "  4 symboles : 3× la mise\n" +
-    "  5 symboles : 4× la mise\n\n" +
-    "Cartes : 3× / 4× / 5× la mise\n" +
-    "Pièce : 4× / 5× / 6× la mise\n" +
-    "Couronne : 10× / 12× / 14× la mise\n" +
-    "BAR : 16× / 18× / 20× la mise\n" +
-    "7 rouge : 20× / 25× / 30× la mise\n" +
-    "777 violet : 30× / 40× / 50× la mise\n\n" +
+    "  5 symboles : 5× la mise\n\n" +
+    "Cartes : 3× / 6× / 10× la mise\n" +
+    "Pièce : 5× / 8× / 15× la mise\n" +
+    "Couronne : 10× / 20× / 30× la mise\n" +
+    "BAR : 12× / 25× / 40× la mise\n" +
+    "7 rouge : 15× / 30× / 60× la mise\n" +
+    "777 violet : 20× / 50× / 100× la mise\n\n" +
     "WILD : remplace tout sauf BONUS\n" +
     "BONUS : 3+ déclenchent 10 free spins (gains ×2)";
 
