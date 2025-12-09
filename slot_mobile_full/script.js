@@ -121,20 +121,26 @@ const PAYLINES = [
   ],
 ];
 
-// Nouveau PAYTABLE avec le mapping actuel
 // Fruits : pastèque(1), pomme(3), cerises(7), citron(10)
-const PAYTABLE = {
-  1: { 3: 2, 4: 3, 5: 4 },   // pastèque
-  3: { 3: 2, 4: 3, 5: 4 },   // pomme
-  7: { 3: 2, 4: 3, 5: 4 },   // cerises
-  10: { 3: 2, 4: 3, 5: 4 },  // citron
+// Mid : cartes(4), pièce(8)
+// Premium : couronne(5), BAR(2), 7 rouge(11), 777 violet(0)
 
-  4: { 3: 3, 4: 4, 5: 5 },   // cartes
-  8: { 3: 4, 4: 5, 5: 6 },   // pièce
-  5: { 3: 10, 4: 12, 5: 14 },// couronne
-  2: { 3: 16, 4: 18, 5: 20 },// BAR
-  11: { 3: 20, 4: 25, 5: 30 },// 7 rouge
-  0: { 3: 30, 4: 40, 5: 50 }, // 777 violet
+const PAYTABLE = {
+  // FRUITS : petits gains
+  1: { 3: 2, 4: 3, 5: 5 },   // pastèque
+  3: { 3: 2, 4: 3, 5: 5 },   // pomme
+  7: { 3: 2, 4: 3, 5: 5 },   // cerises
+  10:{ 3: 2, 4: 3, 5: 5 },   // citron
+
+  // MID
+  4: { 3: 4, 4: 6, 5: 10 },  // cartes
+  8: { 3: 5, 4: 8, 5: 15 },  // pièce
+
+  // PREMIUM
+  5: { 3: 10, 4: 20, 5: 30 }, // couronne
+  2: { 3: 12, 4: 25, 5: 40 }, // BAR
+  11:{ 3: 15, 4: 30, 5: 60 }, // 7 rouge
+  0: { 3: 20, 4: 50, 5: 100 } // 777 violet
 };
 
 // --------------------------------------------------
