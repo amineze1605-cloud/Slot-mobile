@@ -15,21 +15,21 @@ const COLS = 5;
 const ROWS = 3;
 
 // --- mapping spritesheet ---
-// 0 - 777 violet
+// 0 - 7 mauve (jackpot max)
 // 1 - pastèque
 // 2 - BAR
 // 3 - pomme
 // 4 - cartes
-// 5 - couronne
-// 6 - BONUS
-// 7 - cerises
-// 8 - pièce
+// 5 - cerises
+// 6 - pièce
+// 7 - couronne
+// 8 - BONUS
 // 9 - WILD
 // 10 - citron
 // 11 - 7 rouge
 
 const WILD_ID = 9;
-const BONUS_ID = 6;
+const BONUS_ID = 8;
 
 // état jeu
 let balance = 1000;
