@@ -24,7 +24,7 @@ const COLS = 5;
 const SYMBOLS_COUNT = 12; // IDs 0..11
 
 // Mapping utilisé côté front :
-// 0 - 777 violet
+// 0 - 77 mauve
 // 1 - pastèque
 // 2 - BAR
 // 3 - pomme
