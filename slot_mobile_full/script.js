@@ -15,21 +15,21 @@ const COLS = 5;
 const ROWS = 3;
 
 // --- mapping spritesheet ---
-// 0 - 7 mauve (jackpot max)
+// 0 - 777 violet
 // 1 - pastèque
 // 2 - BAR
 // 3 - pomme
 // 4 - cartes
-// 5 - cerises
-// 6 - pièce
-// 7 - couronne
-// 8 - BONUS
+// 5 - couronne
+// 6 - BONUS
+// 7 - cerises
+// 8 - pièce
 // 9 - WILD
 // 10 - citron
 // 11 - 7 rouge
 
 const WILD_ID = 9;
-const BONUS_ID = 8;
+const BONUS_ID = 6;
 
 // état jeu
 let balance = 1000;
@@ -122,19 +122,19 @@ const PAYLINES = [
 ];
 
 // Nouveau PAYTABLE avec le mapping actuel
-// Fruits : pastèque(1), pomme(3), cerises(5), citron(10)
+// Fruits : pastèque(1), pomme(3), cerises(7), citron(10)
 const PAYTABLE = {
-  1:  { 3: 2, 4: 3, 5: 4 },   // pastèque
-  3:  { 3: 2, 4: 3, 5: 4 },   // pomme
-  5:  { 3: 2, 4: 3, 5: 4 },   // cerises
-  10: { 3: 2, 4: 3, 5: 4 },   // citron
+  1: { 3: 2, 4: 3, 5: 4 },   // pastèque
+  3: { 3: 2, 4: 3, 5: 4 },   // pomme
+  7: { 3: 2, 4: 3, 5: 4 },   // cerises
+  10: { 3: 2, 4: 3, 5: 4 },  // citron
 
-  4:  { 3: 3, 4: 4, 5: 5 },   // cartes
-  6:  { 3: 4, 4: 5, 5: 6 },   // pièce
-  7:  { 3: 10, 4: 12, 5: 14 },// couronne
-  2:  { 3: 16, 4: 18, 5: 20 },// BAR
+  4: { 3: 3, 4: 4, 5: 5 },   // cartes
+  8: { 3: 4, 4: 5, 5: 6 },   // pièce
+  5: { 3: 10, 4: 12, 5: 14 },// couronne
+  2: { 3: 16, 4: 18, 5: 20 },// BAR
   11: { 3: 20, 4: 25, 5: 30 },// 7 rouge
-  0:  { 3: 30, 4: 40, 5: 50 },// 7 mauve (ex-777)
+  0: { 3: 30, 4: 40, 5: 50 }, // 777 violet
 };
 
 // --------------------------------------------------
@@ -448,9 +448,8 @@ function createPaytableOverlay() {
 
   const container = new PIXI.Container();
   container.visible = false;
-  container.interactive = true; // bloque les clics sur le jeu pendant l'affichage
+  container.interactive = true;
 
-  // fond semi-transparent plein écran
   const backdrop = new PIXI.Graphics();
   backdrop.beginFill(0x000000, 0.75);
   backdrop.drawRect(0, 0, w, h);
@@ -458,12 +457,10 @@ function createPaytableOverlay() {
   backdrop.interactive = true;
   container.addChild(backdrop);
 
-  // panneau centré (un peu plus haut qu'avant)
   const panelWidth = w * 0.86;
-  const panelHeight = h * 0.7;
+  const panelHeight = h * 0.62;
   const panelX = (w - panelWidth) / 2;
   const panelY = (h - panelHeight) / 2;
-  const marginY = h * 0.02;
 
   const panel = new PIXI.Graphics();
   panel.beginFill(0x111827);
@@ -473,7 +470,6 @@ function createPaytableOverlay() {
   panel.interactive = true;
   container.addChild(panel);
 
-  // titre
   const styleTitle = new PIXI.TextStyle({
     fontFamily: "system-ui",
     fontSize: Math.round(h * 0.035),
@@ -482,24 +478,19 @@ function createPaytableOverlay() {
   const title = new PIXI.Text("Table des gains", styleTitle);
   title.anchor.set(0.5, 0);
   title.x = w / 2;
-  title.y = panelY + marginY;
+  title.y = panelY + h * 0.02;
   container.addChild(title);
-
-  // corps du texte
-  const smallScreen = h < 750;
-  const baseFontSize = smallScreen ? Math.round(h * 0.022) : Math.round(h * 0.026);
-  const baseLineHeight = smallScreen ? Math.round(h * 0.026) : Math.round(h * 0.031);
 
   const styleBody = new PIXI.TextStyle({
     fontFamily: "system-ui",
-    fontSize: baseFontSize,
+    fontSize: Math.round(h * 0.026),
     fill: 0xffffff,
     wordWrap: true,
     wordWrapWidth: panelWidth * 0.8,
-    lineHeight: baseLineHeight,
+    lineHeight: Math.round(h * 0.031),
   });
 
-      const bodyText =
+  const bodyText =
     "Fruits (pastèque, pomme, cerises, citron) :\n" +
     "  3 symboles : 2× la mise\n" +
     "  4 symboles : 3× la mise\n" +
@@ -509,37 +500,29 @@ function createPaytableOverlay() {
     "Couronne : 10× / 12× / 14× la mise\n" +
     "BAR : 16× / 18× / 20× la mise\n" +
     "7 rouge : 20× / 25× / 30× la mise\n" +
-    "7 mauve : 30× / 40× / 50× la mise\n\n" +
+    "777 violet : 30× / 40× / 50× la mise\n\n" +
     "WILD : remplace tout sauf BONUS\n" +
     "BONUS : 3+ déclenchent 10 free spins (gains ×2)";
-    
+
   const body = new PIXI.Text(bodyText, styleBody);
   body.anchor.set(0.5, 0);
   body.x = w / 2;
-  body.y = title.y + title.height + marginY;
+  body.y = title.y + title.height + h * 0.02;
   container.addChild(body);
 
-  // zone disponible entre le titre et le bouton
-  const availableTextHeight = panelHeight - (title.height + marginY * 4);
-  const closeHeight = h * 0.06;
-
-  // si le texte dépasse trop, on réduit la taille de police
-  if (body.height + closeHeight > availableTextHeight) {
-    const maxBodyHeight = availableTextHeight - closeHeight;
-    const scale = maxBodyHeight / body.height;
-
-    body.style.fontSize = Math.max(12, body.style.fontSize * scale * 0.95);
-    body.style.lineHeight = Math.max(14, body.style.lineHeight * scale * 0.95);
-    // Pixi mettra à jour body.height automatiquement après changement de style
-  }
-
-  // bouton FERMER en bas du panneau
   const closeWidth = panelWidth * 0.35;
+  const closeHeight = h * 0.06;
   const close = new PIXI.Container();
   const cg = new PIXI.Graphics();
   cg.beginFill(0x111827);
   cg.lineStyle(4, 0xf2b632, 1);
-  cg.drawRoundedRect(-closeWidth / 2, -closeHeight / 2, closeWidth, closeHeight, 16);
+  cg.drawRoundedRect(
+    -closeWidth / 2,
+    -closeHeight / 2,
+    closeWidth,
+    closeHeight,
+    16
+  );
   cg.endFill();
 
   const closeStyle = new PIXI.TextStyle({
@@ -552,7 +535,7 @@ function createPaytableOverlay() {
 
   close.addChild(cg, closeText);
   close.x = w / 2;
-  close.y = panelY + panelHeight - marginY - closeHeight / 2; // toujours DANS le cadre
+  close.y = panelY + panelHeight - closeHeight - h * 0.02;
   close.interactive = true;
   close.buttonMode = true;
 
