@@ -500,18 +500,18 @@ function createPaytableOverlay() {
   });
 
   const bodyText =
-    "Fruits (pastèque, pomme, cerises, citron) :\n" +
-    "  3 symboles : 2× la mise\n" +
-    "  4 symboles : 3× la mise\n" +
-    "  5 symboles : 4× la mise\n\n" +
-    "Cartes : 3× / 4× / 5× la mise\n" +
-    "Pièce : 4× / 5× / 6× la mise\n" +
-    "Couronne : 10× / 12× / 14× la mise\n" +
-    "BAR : 16× / 18× / 20× la mise\n" +
-    "7 rouge : 20× / 25× / 30× la mise\n" +
-    "777 violet : 30× / 40× / 50× la mise\n\n" +
-    "WILD : remplace tout sauf BONUS\n" +
-    "BONUS : 3+ déclenchent 10 free spins (gains ×2)";
+  "Fruits (pastèque, pomme, cerises, citron) :\n" +
+  "  3 symboles : 2× la mise\n" +
+  "  4 symboles : 3× la mise\n" +
+  "  5 symboles : 4× la mise\n\n" +
+  "Cartes : 3× / 4× / 5× la mise\n" +
+  "Pièce : 4× / 5× / 6× la mise\n" +
+  "Couronne : 10× / 12× / 14× la mise\n" +
+  "BAR : 16× / 18× / 20× la mise\n" +
+  "7 rouge : 20× / 25× / 30× la mise\n" +
+  "77 mauve : 30× / 40× / 50× la mise\n\n" +
+  "WILD : remplace tout sauf BONUS\n" +
+  "BONUS : 3+ déclenchent 10 free spins (gains ×2)";
 
   const body = new PIXI.Text(bodyText, styleBody);
   body.anchor.set(0.5, 0);
