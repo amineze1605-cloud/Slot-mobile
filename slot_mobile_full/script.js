@@ -15,17 +15,17 @@ const COLS = 5;
 const ROWS = 3;
 
 // --- mapping spritesheet ---
-// 0 - 777 violet
-// 1 - pastèque
+// 0 - 77 mauve
+// 1 - pastèque 
 // 2 - BAR
-// 3 - pomme
+// 3 - pomme 
 // 4 - cartes
-// 5 - couronne
+// 5 - couronne 
 // 6 - BONUS
-// 7 - cerises
-// 8 - pièce
+// 7 - cerises 
+// 8 - pièce 
 // 9 - WILD
-// 10 - citron
+// 10 - citron 
 // 11 - 7 rouge
 
 const WILD_ID = 9;
