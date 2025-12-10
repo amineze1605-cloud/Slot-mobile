@@ -202,24 +202,29 @@ async function initPixi() {
     const fullW = baseTexture.width;
     const fullH = baseTexture.height;
 
-    const COLS_SHEET = 3;
-    const ROWS_SHEET = 4;
-    const frameW = fullW / COLS_SHEET;
-    const frameH = fullH / ROWS_SHEET;
+    // 3 colonnes x 4 lignes => 12 symboles
+const COLS_SHEET = 3;
+const ROWS_SHEET = 4;
 
-    symbolTextures = [];
-    for (let r = 0; r < ROWS_SHEET; r++) {
-      for (let c = 0; c < COLS_SHEET; c++) {
-        const rect = new PIXI.Rectangle(
-          c * frameW,
-          r * frameH,
-          frameW,
-          frameH
-        );
-        const tex = new PIXI.Texture(baseTexture, rect);
-        symbolTextures.push(tex);
-      }
-    }
+const fullW = baseTexture.width;
+const fullH = baseTexture.height;
+
+const frameW = fullW / COLS_SHEET;
+const frameH = fullH / ROWS_SHEET;
+
+symbolTextures = [];
+for (let r = 0; r < ROWS_SHEET; r++) {
+  for (let c = 0; c < COLS_SHEET; c++) {
+    const rect = new PIXI.Rectangle(
+      c * frameW,
+      r * frameH,
+      frameW,
+      frameH
+    );
+    const tex = new PIXI.Texture(baseTexture, rect);
+    symbolTextures.push(tex);
+  }
+}
 
     if (!symbolTextures.length) {
       showMessage("Erreur JS : spritesheet vide");
