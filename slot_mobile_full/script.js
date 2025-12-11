@@ -200,33 +200,59 @@ async function initPixi() {
   try {
     const baseTexture = await loadSpritesheet();
 
-    // Dimensions du spritesheet
+    // dimensions réelles de l’image
     const fullW = baseTexture.width;
     const fullH = baseTexture.height;
 
-    // 3 colonnes x 4 lignes => 12 symboles
+    // 3 colonnes x 4 lignes sur ton spritesheet
     const COLS_SHEET = 3;
     const ROWS_SHEET = 4;
 
     const frameW = fullW / COLS_SHEET;
     const frameH = fullH / ROWS_SHEET;
 
-    // marge interne pour éviter les bords bizarres
-    const INNER_PADDING = 10; // ajuste si tu veux (0, 4, 8…)
-
+    // on vide au cas où
     symbolTextures = [];
-    for (let r = 0; r < ROWS_SHEET; r++) {
-      for (let c = 0; c < COLS_SHEET; c++) {
-        const rect = new PIXI.Rectangle(
-          c * frameW + INNER_PADDING,
-          r * frameH + INNER_PADDING,
-          frameW - INNER_PADDING * 2,
-          frameH - INNER_PADDING * 2
-        );
-        const tex = new PIXI.Texture(baseTexture, rect);
-        symbolTextures.push(tex);
-      }
-    }
+
+    // --- MAPPING MANUEL 0 → 11 ---
+    // 0 - 77 mauve
+    // 1 - pastèque 
+    // 2 - BAR
+    // 3 - pomme 
+    // 4 - cartes
+    // 5 - couronne 
+    // 6 - BONUS
+    // 7 - cerises 
+    // 8 - pièce 
+    // 9 - WILD
+    // 10- citron 
+    // 11- 7 rouge
+
+    const positions = [
+      [0, 0], // 0 : 77 mauve
+      [1, 0], // 1 : pastèque
+      [2, 0], // 2 : BAR
+      [0, 1], // 3 : pomme
+      [1, 1], // 4 : cartes
+      [2, 1], // 5 : couronne
+      [0, 2], // 6 : BONUS
+      [1, 2], // 7 : cerises
+      [2, 2], // 8 : pièce
+      [0, 3], // 9 : WILD
+      [1, 3], // 10 : citron
+      [2, 3], // 11 : 7 rouge
+    ];
+
+    positions.forEach(([c, r]) => {
+      const rect = new PIXI.Rectangle(
+        c * frameW,
+        r * frameH,
+        frameW,
+        frameH
+      );
+      const tex = new PIXI.Texture(baseTexture, rect);
+      symbolTextures.push(tex);
+    });
 
     if (!symbolTextures.length) {
       showMessage("Erreur JS : spritesheet vide");
@@ -234,11 +260,10 @@ async function initPixi() {
     }
 
     buildSlotScene(); // affichage
-    buildHUD(); // textes + boutons
+    buildHUD();       // textes + boutons
     hideMessage();
     updateHUDTexts("Appuyez sur SPIN pour lancer");
 
-    // ticker pour le clignotement des symboles gagnants
     app.ticker.add(updateHighlight);
   } catch (e) {
     console.error("Erreur chargement spritesheet.png", e);
