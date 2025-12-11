@@ -197,7 +197,7 @@ async function initPixi() {
 
   showMessage("Chargement…");
 
-    try {
+      try {
     const baseTexture = await loadSpritesheet();
 
     // Dimensions réelles de ton spritesheet
