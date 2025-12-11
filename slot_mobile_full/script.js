@@ -212,7 +212,7 @@ async function initPixi() {
     const frameH = fullH / ROWS_SHEET;
 
     // marge interne pour éviter les bords bizarres
-    const INNER_PADDING = 8; // ajuste si tu veux (0, 4, 8…)
+    const INNER_PADDING = 10; // ajuste si tu veux (0, 4, 8…)
 
     symbolTextures = [];
     for (let r = 0; r < ROWS_SHEET; r++) {
