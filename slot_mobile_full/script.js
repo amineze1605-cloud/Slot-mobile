@@ -197,27 +197,31 @@ async function initPixi() {
 
   showMessage("Chargement…");
 
-  try {
+    try {
     const baseTexture = await loadSpritesheet();
 
-    // 3 colonnes x 4 lignes => 12 symboles
-    const COLS_SHEET = 3;
-    const ROWS_SHEET = 4;
-
+    // Dimensions réelles de ton spritesheet
     const fullW = baseTexture.width;
     const fullH = baseTexture.height;
 
+    // 3 colonnes x 4 lignes -> 12 symboles
+    const COLS_SHEET = 3;
+    const ROWS_SHEET = 4;
+
     const frameW = fullW / COLS_SHEET;
     const frameH = fullH / ROWS_SHEET;
+
+    // petite marge interne pour éviter de « couper » les bords
+    const INNER_PADDING = 8; // tu peux mettre 0, 4, 8… selon le rendu
 
     symbolTextures = [];
     for (let r = 0; r < ROWS_SHEET; r++) {
       for (let c = 0; c < COLS_SHEET; c++) {
         const rect = new PIXI.Rectangle(
-          c * frameW,
-          r * frameH,
-          frameW,
-          frameH
+          c * frameW + INNER_PADDING,
+          r * frameH + INNER_PADDING,
+          frameW - INNER_PADDING * 2,
+          frameH - INNER_PADDING * 2
         );
         const tex = new PIXI.Texture(baseTexture, rect);
         symbolTextures.push(tex);
@@ -234,14 +238,12 @@ async function initPixi() {
     hideMessage();
     updateHUDTexts("Appuyez sur SPIN pour lancer");
 
-    // ticker pour le clignotement des symboles gagnants
     app.ticker.add(updateHighlight);
   } catch (e) {
     console.error("Erreur chargement spritesheet.png", e);
     const msg = e && e.message ? e.message : String(e);
     showMessage("Erreur JS : chargement assets (" + msg + ")");
   }
-}
 
 // --------------------------------------------------
 // Construction de la scène slot (AFFICHAGE AJUSTÉ)
