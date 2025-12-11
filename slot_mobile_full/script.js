@@ -199,10 +199,7 @@ async function initPixi() {
 
       try {
     const baseTexture = await loadSpritesheet();
-
-    // Dimensions réelles de ton spritesheet
-    const fullW = baseTexture.width;
-    const fullH = baseTexture.height;
+    
 
     // 3 colonnes x 4 lignes -> 12 symboles
     const COLS_SHEET = 3;
