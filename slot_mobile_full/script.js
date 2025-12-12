@@ -197,21 +197,21 @@ async function initPixi() {
 
   showMessage("Chargement…");
 
-  try {
+      try {
     const baseTexture = await loadSpritesheet();
 
-    // dimensions réelles de l’image
     const fullW = baseTexture.width;
     const fullH = baseTexture.height;
 
-    // 3 colonnes x 4 lignes sur ton spritesheet
-    const COLS_SHEET = 3;
+    // 4 lignes, icônes carrées
     const ROWS_SHEET = 4;
-
-    const frameW = fullW / COLS_SHEET;
     const frameH = fullH / ROWS_SHEET;
+    const frameW = frameH;        // chaque symbole est carré
 
-    // on vide au cas où
+    const COLS_SHEET = 3;
+    const totalTilesW = frameW * COLS_SHEET;
+    const marginX = (fullW - totalTilesW) / 2; // marge gauche/droite
+
     symbolTextures = [];
 
     // --- MAPPING MANUEL 0 → 11 ---
@@ -227,7 +227,6 @@ async function initPixi() {
     // 9 - WILD
     // 10- citron 
     // 11- 7 rouge
-
     const positions = [
       [0, 0], // 0 : 77 mauve
       [1, 0], // 1 : pastèque
@@ -245,7 +244,7 @@ async function initPixi() {
 
     positions.forEach(([c, r]) => {
       const rect = new PIXI.Rectangle(
-        c * frameW,
+        marginX + c * frameW, // on part de marginX !
         r * frameH,
         frameW,
         frameH
@@ -259,8 +258,8 @@ async function initPixi() {
       return;
     }
 
-    buildSlotScene(); // affichage
-    buildHUD();       // textes + boutons
+    buildSlotScene();
+    buildHUD();
     hideMessage();
     updateHUDTexts("Appuyez sur SPIN pour lancer");
 
@@ -270,7 +269,6 @@ async function initPixi() {
     const msg = e && e.message ? e.message : String(e);
     showMessage("Erreur JS : chargement assets (" + msg + ")");
   }
-}
 
 // --------------------------------------------------
 // Construction de la scène slot
