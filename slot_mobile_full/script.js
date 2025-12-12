@@ -328,7 +328,10 @@ function buildSlotScene() {
       const sprite = new PIXI.Sprite(texture);
 
       sprite.width = symbolSize;
-      sprite.height = symbolSize;
+sprite.height = symbolSize;
+sprite.anchor.set(0.5);
+sprite.x = symbolSize / 2;
+sprite.y = r * (symbolSize + gap) + symbolSize / 2;
       sprite.x = 0;
       sprite.y = r * (symbolSize + gap);
 
