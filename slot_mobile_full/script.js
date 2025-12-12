@@ -197,7 +197,7 @@ async function initPixi() {
 
   showMessage("Chargement…");
 
-      try {
+  try {
     const baseTexture = await loadSpritesheet();
 
     const fullW = baseTexture.width;
@@ -206,7 +206,7 @@ async function initPixi() {
     // 4 lignes, icônes carrées
     const ROWS_SHEET = 4;
     const frameH = fullH / ROWS_SHEET;
-    const frameW = frameH;        // chaque symbole est carré
+    const frameW = frameH; // chaque symbole est carré
 
     const COLS_SHEET = 3;
     const totalTilesW = frameW * COLS_SHEET;
@@ -214,19 +214,6 @@ async function initPixi() {
 
     symbolTextures = [];
 
-    // --- MAPPING MANUEL 0 → 11 ---
-    // 0 - 77 mauve
-    // 1 - pastèque 
-    // 2 - BAR
-    // 3 - pomme 
-    // 4 - cartes
-    // 5 - couronne 
-    // 6 - BONUS
-    // 7 - cerises 
-    // 8 - pièce 
-    // 9 - WILD
-    // 10- citron 
-    // 11- 7 rouge
     const positions = [
       [0, 0], // 0 : 77 mauve
       [1, 0], // 1 : pastèque
@@ -244,7 +231,7 @@ async function initPixi() {
 
     positions.forEach(([c, r]) => {
       const rect = new PIXI.Rectangle(
-        marginX + c * frameW, // on part de marginX !
+        marginX + c * frameW,
         r * frameH,
         frameW,
         frameH
@@ -269,6 +256,7 @@ async function initPixi() {
     const msg = e && e.message ? e.message : String(e);
     showMessage("Erreur JS : chargement assets (" + msg + ")");
   }
+} // <== cette accolade manquait
 
 // --------------------------------------------------
 // Construction de la scène slot
