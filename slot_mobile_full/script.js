@@ -164,7 +164,7 @@ function hideMessage() {
 function loadSpritesheet() {
   return new Promise((resolve, reject) => {
     const img = new Image();
-    img.src = "assets/spritesheet.png";
+    img.src = "assets/spritesheet.png?v=4";
 
     img.onload = () => {
       try {
