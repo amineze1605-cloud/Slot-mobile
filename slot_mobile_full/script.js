@@ -199,21 +199,40 @@ async function initPixi() {
 
   try {
     const baseTexture = await loadSpritesheet();
-
     const fullW = baseTexture.width;
     const fullH = baseTexture.height;
 
-    // 4 lignes, icônes carrées
-    const ROWS_SHEET = 4;
-    const frameH = fullH / ROWS_SHEET;
-    const frameW = frameH; // chaque symbole est carré
-
+    // Ton spritesheet : 3 colonnes x 4 lignes
     const COLS_SHEET = 3;
-    const totalTilesW = frameW * COLS_SHEET;
-    const marginX = (fullW - totalTilesW) / 2; // marge gauche/droite
+    const ROWS_SHEET = 4;
+
+    // Frontières verticales : 0, ~341, ~682, 1024
+    const colXs = [];
+    for (let c = 0; c <= COLS_SHEET; c++) {
+      colXs.push(Math.round((fullW / COLS_SHEET) * c));
+    }
+
+    // Frontières horizontales : 0, 256, 512, 768, 1024
+    const rowYs = [];
+    for (let r = 0; r <= ROWS_SHEET; r++) {
+      rowYs.push(Math.round((fullH / ROWS_SHEET) * r));
+    }
 
     symbolTextures = [];
 
+    // --- MAPPING MANUEL 0 → 11 ---
+    // 0 - 77 mauve
+    // 1 - pastèque 
+    // 2 - BAR
+    // 3 - pomme 
+    // 4 - cartes
+    // 5 - couronne 
+    // 6 - BONUS
+    // 7 - cerises 
+    // 8 - pièce 
+    // 9 - WILD
+    // 10- citron 
+    // 11- 7 rouge
     const positions = [
       [0, 0], // 0 : 77 mauve
       [1, 0], // 1 : pastèque
@@ -230,12 +249,12 @@ async function initPixi() {
     ];
 
     positions.forEach(([c, r]) => {
-      const rect = new PIXI.Rectangle(
-        marginX + c * frameW,
-        r * frameH,
-        frameW,
-        frameH
-      );
+      const x0 = colXs[c];
+      const x1 = colXs[c + 1];
+      const y0 = rowYs[r];
+      const y1 = rowYs[r + 1];
+
+      const rect = new PIXI.Rectangle(x0, y0, x1 - x0, y1 - y0);
       const tex = new PIXI.Texture(baseTexture, rect);
       symbolTextures.push(tex);
     });
@@ -245,8 +264,8 @@ async function initPixi() {
       return;
     }
 
-    buildSlotScene();
-    buildHUD();
+    buildSlotScene();  // affichage
+    buildHUD();        // textes + boutons
     hideMessage();
     updateHUDTexts("Appuyez sur SPIN pour lancer");
 
@@ -255,8 +274,8 @@ async function initPixi() {
     console.error("Erreur chargement spritesheet.png", e);
     const msg = e && e.message ? e.message : String(e);
     showMessage("Erreur JS : chargement assets (" + msg + ")");
-  }
-} // <== cette accolade manquait
+  }   // <--- cette accolade ferme bien initPixi()
+}
 
 // --------------------------------------------------
 // Construction de la scène slot
@@ -308,15 +327,15 @@ function buildSlotScene() {
       symbols: [],
     };
 
-        for (let r = 0; r < ROWS; r++) {
+    for (let r = 0; r < ROWS; r++) {
       const idx = Math.floor(Math.random() * symbolTextures.length);
       const texture = symbolTextures[idx];
       const sprite = new PIXI.Sprite(texture);
 
+      // on garde le symbole entier, centré dans sa case
       sprite.anchor.set(0.5);
       sprite.width = symbolSize;
       sprite.height = symbolSize;
-
       sprite.x = symbolSize / 2;
       sprite.y = r * (symbolSize + gap) + symbolSize / 2;
 
