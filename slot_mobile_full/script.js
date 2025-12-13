@@ -278,16 +278,21 @@ async function initPixi() {
 }
 
 // --------------------------------------------------
-// Construction de la scène slot
+// Construction de la scène slot (cadre plus étroit)
 // --------------------------------------------------
 function buildSlotScene() {
   const w = app.renderer.width;
   const h = app.renderer.height;
 
-  const maxTotalWidth = w * 0.9;
+  // marge latérale en % de la largeur écran
+  const sideMargin = w * 0.08;          // ~8% de chaque côté
+  const maxTotalWidth = w - sideMargin * 2;  // largeur max pour la grille
+
   const gap = 8;
 
+  // taille max des symboles en fonction de la hauteur
   const symbolFromHeight = h * 0.16;
+  // taille max en fonction de la largeur dispo (avec la marge)
   const symbolFromWidth = (maxTotalWidth - gap * (COLS - 1)) / COLS;
   const symbolSize = Math.min(symbolFromWidth, symbolFromHeight);
 
@@ -296,10 +301,11 @@ function buildSlotScene() {
   const slotContainer = new PIXI.Container();
   app.stage.addChild(slotContainer);
 
+  // centré, mais en respectant la marge
   slotContainer.x = (w - totalReelWidth) / 2;
   slotContainer.y = h * 0.22;
 
-  // cadre
+  // cadre un peu plus petit que l’écran → plus de “respiration”
   const framePaddingX = 18;
   const framePaddingY = 18;
   const frame = new PIXI.Graphics();
@@ -332,7 +338,7 @@ function buildSlotScene() {
       const texture = symbolTextures[idx];
       const sprite = new PIXI.Sprite(texture);
 
-      // on garde le symbole entier, centré dans sa case
+      // symbole centré dans sa case
       sprite.anchor.set(0.5);
       sprite.width = symbolSize;
       sprite.height = symbolSize;
