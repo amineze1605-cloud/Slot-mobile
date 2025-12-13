@@ -1,10 +1,7 @@
 // script.js
-// Slot mobile PIXI v5 – 5x3, 5 lignes, free spins + nouveau mapping
-// + FIX texture bleeding (clamp + mipmaps off + roundPixels + PAD inside rect)
+// Slot mobile PIXI v5 – 5x3, 5 lignes, free spins + mapping 0..11
+// FIX: découpe exacte 1024/3 + anti-bleed (clamp + mipmaps off + roundPixels)
 
-// --------------------------------------------------
-// PIXI global settings (IMPORTANT)
-// --------------------------------------------------
 PIXI.settings.ROUND_PIXELS = true;
 PIXI.settings.MIPMAP_TEXTURES = PIXI.MIPMAP_MODES.OFF;
 
@@ -21,20 +18,7 @@ let reels = [];
 const COLS = 5;
 const ROWS = 3;
 
-// --- mapping spritesheet ---
-// 0 - 77 mauve
-// 1 - pastèque
-// 2 - BAR
-// 3 - pomme
-// 4 - cartes
-// 5 - couronne
-// 6 - BONUS
-// 7 - cerises
-// 8 - pièce
-// 9 - WILD
-// 10 - citron
-// 11 - 7 rouge
-
+// mapping spritesheet (ID 0..11)
 const WILD_ID = 9;
 const BONUS_ID = 6;
 
@@ -52,7 +36,7 @@ let statsText;
 let btnMinus, btnPlus, btnSpin, btnInfo;
 let paytableOverlay = null;
 
-// pour le clignotement des lignes gagnantes
+// highlight
 let highlightedSprites = [];
 let highlightTimer = 0;
 
@@ -86,62 +70,25 @@ function playSound(name) {
 
 // indices [col, row]
 const PAYLINES = [
-  // 0 : ligne du haut
-  [
-    [0, 0],
-    [1, 0],
-    [2, 0],
-    [3, 0],
-    [4, 0],
-  ],
-  // 1 : milieu
-  [
-    [0, 1],
-    [1, 1],
-    [2, 1],
-    [3, 1],
-    [4, 1],
-  ],
-  // 2 : bas
-  [
-    [0, 2],
-    [1, 2],
-    [2, 2],
-    [3, 2],
-    [4, 2],
-  ],
-  // 3 : diagonale ↘
-  [
-    [0, 0],
-    [1, 1],
-    [2, 2],
-    [3, 1],
-    [4, 0],
-  ],
-  // 4 : diagonale ↗
-  [
-    [0, 2],
-    [1, 1],
-    [2, 0],
-    [3, 1],
-    [4, 2],
-  ],
+  [[0, 0], [1, 0], [2, 0], [3, 0], [4, 0]], // haut
+  [[0, 1], [1, 1], [2, 1], [3, 1], [4, 1]], // milieu
+  [[0, 2], [1, 2], [2, 2], [3, 2], [4, 2]], // bas
+  [[0, 0], [1, 1], [2, 2], [3, 1], [4, 0]], // diagonale ↘
+  [[0, 2], [1, 1], [2, 0], [3, 1], [4, 2]], // diagonale ↗
 ];
 
-// Paytable (multiplicateurs de mise)
-// Fruits : pastèque(1), pomme(3), cerises(7), citron(10)
 const PAYTABLE = {
-  1: { 3: 2, 4: 3, 5: 4 }, // pastèque
-  3: { 3: 2, 4: 3, 5: 4 }, // pomme
-  7: { 3: 2, 4: 3, 5: 4 }, // cerises
-  10: { 3: 2, 4: 3, 5: 4 }, // citron
+  1: { 3: 2, 4: 3, 5: 4 },   // pastèque
+  3: { 3: 2, 4: 3, 5: 4 },   // pomme
+  7: { 3: 2, 4: 3, 5: 4 },   // cerises
+  10:{ 3: 2, 4: 3, 5: 4 },   // citron
 
-  4: { 3: 3, 4: 4, 5: 5 }, // cartes
-  8: { 3: 4, 4: 5, 5: 6 }, // pièce
-  5: { 3: 10, 4: 12, 5: 14 }, // couronne
-  2: { 3: 16, 4: 18, 5: 20 }, // BAR
-  11: { 3: 20, 4: 25, 5: 30 }, // 7 rouge
-  0: { 3: 30, 4: 40, 5: 50 }, // 77 mauve
+  4: { 3: 3, 4: 4, 5: 5 },   // cartes
+  8: { 3: 4, 4: 5, 5: 6 },   // pièce
+  5: { 3: 10, 4: 12, 5: 14 },// couronne
+  2: { 3: 16, 4: 18, 5: 20 },// BAR
+  11:{ 3: 20, 4: 25, 5: 30 },// 7 rouge
+  0: { 3: 30, 4: 40, 5: 50 },// 77 mauve
 };
 
 // --------------------------------------------------
@@ -164,18 +111,21 @@ function hideMessage() {
 function loadSpritesheet() {
   return new Promise((resolve, reject) => {
     const img = new Image();
-    img.src = "assets/spritesheet.png?v=4";
+    img.src = "assets/spritesheet.png?v=4"; // bump v=5 si cache iPhone
 
     img.onload = () => {
       try {
         const baseTexture = PIXI.BaseTexture.from(img);
 
-        // ---- FIX bleeding ----
+        // Anti-bleed
         baseTexture.mipmap = PIXI.MIPMAP_MODES.OFF;
         baseTexture.wrapMode = PIXI.WRAP_MODES.CLAMP;
-        // baseTexture.scaleMode = PIXI.SCALE_MODES.LINEAR; // (optionnel, mais ok)
-        baseTexture.update();
 
+        // Rendu (LINEAR = joli / NEAREST = ultra-safe si tu vois encore du bleed)
+        baseTexture.scaleMode = PIXI.SCALE_MODES.LINEAR;
+        // baseTexture.scaleMode = PIXI.SCALE_MODES.NEAREST;
+
+        baseTexture.update();
         resolve(baseTexture);
       } catch (e) {
         reject(e);
@@ -209,7 +159,6 @@ async function initPixi() {
     antialias: true,
   });
 
-  // (utile pour éviter les “demi pixels”)
   app.renderer.roundPixels = true;
 
   showMessage("Chargement…");
@@ -219,25 +168,24 @@ async function initPixi() {
     const fullW = baseTexture.width;
     const fullH = baseTexture.height;
 
-    // Ton spritesheet : 3 colonnes x 4 lignes
+    // Spritesheet : 3 colonnes x 4 lignes
     const COLS_SHEET = 3;
     const ROWS_SHEET = 4;
 
-    // Frontières verticales : 0, ~341, ~683, 1024
+    // ✅ FIX IMPORTANT : découpe EXACTE (évite 682/683 qui casse une colonne)
+    // 1024/3 => frontières: 0,341,682,1024 (largeurs 341,341,342)
     const colXs = [];
-    for (let c = 0; c <= COLS_SHEET; c++) {
-      colXs.push(Math.round((fullW / COLS_SHEET) * c));
-    }
+    for (let c = 0; c <= COLS_SHEET; c++) colXs.push(Math.floor((fullW * c) / COLS_SHEET));
+    colXs[COLS_SHEET] = fullW;
 
-    // Frontières horizontales : 0, 256, 512, 768, 1024
+    // 1024/4 => 0,256,512,768,1024
     const rowYs = [];
-    for (let r = 0; r <= ROWS_SHEET; r++) {
-      rowYs.push(Math.round((fullH / ROWS_SHEET) * r));
-    }
+    for (let r = 0; r <= ROWS_SHEET; r++) rowYs.push(Math.floor((fullH * r) / ROWS_SHEET));
+    rowYs[ROWS_SHEET] = fullH;
 
     symbolTextures = [];
 
-    // --- MAPPING MANUEL 0 → 11 ---
+    // mapping manuel 0..11 (3x4)
     const positions = [
       [0, 0], // 0 : 77 mauve
       [1, 0], // 1 : pastèque
@@ -253,9 +201,9 @@ async function initPixi() {
       [2, 3], // 11 : 7 rouge
     ];
 
-    // ---- FIX bleeding : on rogne 2px à l’intérieur de chaque case ----
-    // Si tu vois encore un léger “débordement”, monte PAD à 3.
-    const PAD = 2;
+    // Ton spritesheet a de la marge -> PAD 0
+    // Si tu vois encore un mini-bleed: mets PAD = 1.
+    const PAD = 0;
 
     positions.forEach(([c, r]) => {
       const x0 = colXs[c];
@@ -270,8 +218,7 @@ async function initPixi() {
         (y1 - y0) - PAD * 2
       );
 
-      const tex = new PIXI.Texture(baseTexture, rect);
-      symbolTextures.push(tex);
+      symbolTextures.push(new PIXI.Texture(baseTexture, rect));
     });
 
     if (!symbolTextures.length) {
@@ -279,8 +226,8 @@ async function initPixi() {
       return;
     }
 
-    buildSlotScene();  // affichage
-    buildHUD();        // textes + boutons
+    buildSlotScene();
+    buildHUD();
     hideMessage();
     updateHUDTexts("Appuyez sur SPIN pour lancer");
 
@@ -289,25 +236,22 @@ async function initPixi() {
     console.error("Erreur chargement spritesheet.png", e);
     const msg = e && e.message ? e.message : String(e);
     showMessage("Erreur JS : chargement assets (" + msg + ")");
-  }   // <--- cette accolade ferme bien initPixi()
+  }
 }
 
 // --------------------------------------------------
-// Construction de la scène slot (cadre plus étroit)
+// Construction scène slot
 // --------------------------------------------------
 function buildSlotScene() {
   const w = app.renderer.width;
   const h = app.renderer.height;
 
-  // marge latérale en % de la largeur écran
-  const sideMargin = w * 0.08;          // ~8% de chaque côté
-  const maxTotalWidth = w - sideMargin * 2;  // largeur max pour la grille
+  const sideMargin = w * 0.08;
+  const maxTotalWidth = w - sideMargin * 2;
 
   const gap = 8;
 
-  // taille max des symboles en fonction de la hauteur
   const symbolFromHeight = h * 0.16;
-  // taille max en fonction de la largeur dispo (avec la marge)
   const symbolFromWidth = (maxTotalWidth - gap * (COLS - 1)) / COLS;
   const symbolSize = Math.min(symbolFromWidth, symbolFromHeight);
 
@@ -316,11 +260,9 @@ function buildSlotScene() {
   const slotContainer = new PIXI.Container();
   app.stage.addChild(slotContainer);
 
-  // centré, mais en respectant la marge
   slotContainer.x = (w - totalReelWidth) / 2;
   slotContainer.y = h * 0.22;
 
-  // cadre un peu plus petit que l’écran → plus de “respiration”
   const framePaddingX = 18;
   const framePaddingY = 18;
   const frame = new PIXI.Graphics();
@@ -343,10 +285,7 @@ function buildSlotScene() {
     slotContainer.addChild(reelContainer);
     reelContainer.x = c * (symbolSize + gap);
 
-    const reel = {
-      container: reelContainer,
-      symbols: [],
-    };
+    const reel = { container: reelContainer, symbols: [] };
 
     for (let r = 0; r < ROWS; r++) {
       const idx = Math.floor(Math.random() * symbolTextures.length);
@@ -355,7 +294,6 @@ function buildSlotScene() {
 
       sprite.roundPixels = true;
 
-      // symbole centré dans sa case
       sprite.anchor.set(0.5);
       sprite.width = symbolSize;
       sprite.height = symbolSize;
@@ -371,7 +309,7 @@ function buildSlotScene() {
 }
 
 // --------------------------------------------------
-// HUD + boutons (INFO sous SPIN)
+// HUD + boutons
 // --------------------------------------------------
 function makeText(txt, size, y, alignCenter = true) {
   const w = app.renderer.width;
@@ -416,15 +354,9 @@ function makeButton(label, width, height) {
   container.interactive = true;
   container.buttonMode = true;
 
-  container.on("pointerdown", () => {
-    g.alpha = 0.7;
-  });
-  container.on("pointerup", () => {
-    g.alpha = 1.0;
-  });
-  container.on("pointerupoutside", () => {
-    g.alpha = 1.0;
-  });
+  container.on("pointerdown", () => (g.alpha = 0.7));
+  container.on("pointerup", () => (g.alpha = 1.0));
+  container.on("pointerupoutside", () => (g.alpha = 1.0));
 
   app.stage.addChild(container);
   return container;
@@ -434,14 +366,12 @@ function buildHUD() {
   const w = app.renderer.width;
   const h = app.renderer.height;
 
-  // texte du haut
   messageText = makeText(
     "Appuyez sur SPIN pour lancer",
     Math.round(h * 0.035),
     h * 0.1
   );
 
-  // texte du bas
   statsText = makeText("", Math.round(h * 0.028), h * 0.72);
   statsText.anchor.set(0.5, 0.5);
 
@@ -451,10 +381,9 @@ function buildHUD() {
 
   const buttonsY = h * 0.82;
 
-  // -1 / SPIN / +1
   btnMinus = makeButton("-1", buttonWidth, buttonHeight);
-  btnSpin = makeButton("SPIN", buttonWidth, buttonHeight);
-  btnPlus = makeButton("+1", buttonWidth, buttonHeight);
+  btnSpin  = makeButton("SPIN", buttonWidth, buttonHeight);
+  btnPlus  = makeButton("+1", buttonWidth, buttonHeight);
 
   btnSpin.x = w / 2;
   btnSpin.y = buttonsY;
@@ -465,7 +394,6 @@ function buildHUD() {
   btnPlus.x = btnSpin.x + (buttonWidth + spacingX);
   btnPlus.y = buttonsY;
 
-  // bouton INFO
   const infoWidth = buttonWidth * 0.9;
   const infoHeight = buttonHeight * 0.75;
   btnInfo = makeButton("INFO", infoWidth, infoHeight);
@@ -481,9 +409,7 @@ function buildHUD() {
 }
 
 function updateHUDTexts(msg) {
-  if (messageText) {
-    messageText.text = msg;
-  }
+  if (messageText) messageText.text = msg;
 }
 
 function updateHUDNumbers() {
@@ -573,7 +499,6 @@ function createPaytableOverlay() {
   if (body.height + closeHeight > availableTextHeight) {
     const maxBodyHeight = availableTextHeight - closeHeight;
     const scale = maxBodyHeight / body.height;
-
     body.style.fontSize = Math.max(12, body.style.fontSize * scale * 0.95);
     body.style.lineHeight = Math.max(14, body.style.lineHeight * scale * 0.95);
   }
@@ -600,36 +525,26 @@ function createPaytableOverlay() {
   close.interactive = true;
   close.buttonMode = true;
 
-  close.on("pointerdown", () => {
-    cg.alpha = 0.7;
-  });
+  close.on("pointerdown", () => (cg.alpha = 0.7));
   close.on("pointerup", () => {
     cg.alpha = 1.0;
     togglePaytable(false);
   });
-  close.on("pointerupoutside", () => {
-    cg.alpha = 1.0;
-  });
+  close.on("pointerupoutside", () => (cg.alpha = 1.0));
 
   container.addChild(close);
-
   app.stage.addChild(container);
   return container;
 }
 
 function togglePaytable(forceVisible) {
-  if (!paytableOverlay) {
-    paytableOverlay = createPaytableOverlay();
-  }
-  if (typeof forceVisible === "boolean") {
-    paytableOverlay.visible = forceVisible;
-  } else {
-    paytableOverlay.visible = !paytableOverlay.visible;
-  }
+  if (!paytableOverlay) paytableOverlay = createPaytableOverlay();
+  if (typeof forceVisible === "boolean") paytableOverlay.visible = forceVisible;
+  else paytableOverlay.visible = !paytableOverlay.visible;
 }
 
 // --------------------------------------------------
-// Application de la grille reçue du backend
+// Application de la grille
 // --------------------------------------------------
 function applyResultToReels(grid) {
   if (!Array.isArray(grid) || grid.length !== ROWS) return;
@@ -638,19 +553,14 @@ function applyResultToReels(grid) {
       const value = grid[r][c];
       const reel = reels[c];
       if (!reel || !reel.symbols[r]) continue;
-      const texture = getTextureByIndex(value);
-      reel.symbols[r].texture = texture;
+      reel.symbols[r].texture = getTextureByIndex(value);
     }
   }
 }
 
 function getTextureByIndex(index) {
-  if (!symbolTextures.length) {
-    return PIXI.Texture.WHITE;
-  }
-  const safeIndex =
-    ((index % symbolTextures.length) + symbolTextures.length) %
-    symbolTextures.length;
+  if (!symbolTextures.length) return PIXI.Texture.WHITE;
+  const safeIndex = ((index % symbolTextures.length) + symbolTextures.length) % symbolTextures.length;
   return symbolTextures[safeIndex] || symbolTextures[0];
 }
 
@@ -676,14 +586,8 @@ function evaluateGrid(grid, betValue) {
       const [col, row] = coords[i];
       const sym = grid[row][col];
 
-      if (sym === BONUS_ID) {
-        invalid = true;
-        break;
-      }
-      if (sym !== WILD_ID) {
-        base = sym;
-        break;
-      }
+      if (sym === BONUS_ID) { invalid = true; break; }
+      if (sym !== WILD_ID) { base = sym; break; }
     }
 
     if (invalid || base === null) return;
@@ -691,6 +595,7 @@ function evaluateGrid(grid, betValue) {
 
     let count = 0;
     const cells = [];
+
     for (let i = 0; i < coords.length; i++) {
       const [col, row] = coords[i];
       const sym = grid[row][col];
@@ -699,24 +604,15 @@ function evaluateGrid(grid, betValue) {
       if (sym === base || sym === WILD_ID) {
         count++;
         cells.push([col, row]);
-      } else {
-        break;
-      }
+      } else break;
     }
 
     if (count >= 3) {
-      const table = PAYTABLE[base];
-      const mult = table && table[count] ? table[count] : 0;
+      const mult = PAYTABLE[base][count] || 0;
       if (mult > 0) {
         const lineWin = betValue * mult;
         baseWin += lineWin;
-        winningLines.push({
-          lineIndex,
-          cells,
-          symbolId: base,
-          count,
-          amount: lineWin,
-        });
+        winningLines.push({ lineIndex, cells, symbolId: base, count, amount: lineWin });
       }
     }
   });
@@ -726,7 +622,7 @@ function evaluateGrid(grid, betValue) {
 }
 
 // --------------------------------------------------
-// Highlight des lignes gagnantes
+// Highlight
 // --------------------------------------------------
 function startHighlight(cells) {
   highlightedSprites.forEach((s) => (s.alpha = 1));
@@ -745,12 +641,9 @@ function updateHighlight(delta) {
   if (!highlightedSprites.length) return;
   highlightTimer += delta;
 
-  const t = highlightTimer;
-  const phase = Math.sin(t * 0.25);
+  const phase = Math.sin(highlightTimer * 0.25);
   const alpha = phase > 0 ? 0.3 : 1.0;
-  highlightedSprites.forEach((s) => {
-    s.alpha = alpha;
-  });
+  highlightedSprites.forEach((s) => (s.alpha = alpha));
 
   if (highlightTimer > 80) {
     highlightedSprites.forEach((s) => (s.alpha = 1));
@@ -760,15 +653,13 @@ function updateHighlight(delta) {
 }
 
 // --------------------------------------------------
-// Gestion du SPIN
+// SPIN
 // --------------------------------------------------
 async function onSpinClick() {
   if (spinning) return;
   if (!app || !symbolTextures.length) return;
 
-  if (freeSpins <= 0) {
-    winMultiplier = 1;
-  }
+  if (freeSpins <= 0) winMultiplier = 1;
 
   spinning = true;
   highlightedSprites.forEach((s) => (s.alpha = 1));
@@ -779,7 +670,6 @@ async function onSpinClick() {
 
   if (freeSpins > 0) {
     paidSpin = false;
-    effectiveBet = bet;
     freeSpins--;
   } else {
     if (balance < bet) {
@@ -792,9 +682,7 @@ async function onSpinClick() {
 
   lastWin = 0;
   updateHUDNumbers();
-  updateHUDTexts(
-    paidSpin ? "Spin en cours…" : `Free spin… restants : ${freeSpins}`
-  );
+  updateHUDTexts(paidSpin ? "Spin en cours…" : `Free spin… restants : ${freeSpins}`);
   playSound("spin");
 
   try {
@@ -810,27 +698,21 @@ async function onSpinClick() {
     applyResultToReels(grid);
 
     setTimeout(() => {
-      const { baseWin, winningLines, bonusTriggered } = evaluateGrid(
-        grid,
-        effectiveBet
-      );
+      const { baseWin, winningLines, bonusTriggered } = evaluateGrid(grid, effectiveBet);
 
       let totalWin = baseWin;
-      let triggered = bonusTriggered;
 
       if (bonusTriggered) {
         freeSpins += 10;
         winMultiplier = 2;
       }
 
-      if (winMultiplier > 1) {
-        totalWin *= winMultiplier;
-      }
+      if (winMultiplier > 1) totalWin *= winMultiplier;
 
       lastWin = totalWin;
       balance += totalWin;
       updateHUDNumbers();
-      finishSpin(totalWin, winningLines, triggered);
+      finishSpin(totalWin, winningLines, bonusTriggered);
     }, 400);
   } catch (err) {
     console.error("Erreur API /spin", err);
@@ -845,26 +727,16 @@ function finishSpin(win, winningLines, bonusTriggered) {
 
   if (win > 0) {
     playSound("win");
-    if (freeSpins > 0) {
-      updateHUDTexts(`Gain : ${win} — free spins : ${freeSpins}`);
-    } else {
-      updateHUDTexts(`Gain : ${win}`);
-    }
+    updateHUDTexts(freeSpins > 0 ? `Gain : ${win} — free spins : ${freeSpins}` : `Gain : ${win}`);
 
     const cells = [];
     if (winningLines && winningLines.length) {
-      winningLines.forEach((line) => {
-        line.cells.forEach((c) => cells.push(c));
-      });
+      winningLines.forEach((line) => line.cells.forEach((c) => cells.push(c)));
     }
     if (cells.length) startHighlight(cells);
   } else {
     playSound("stop");
-    if (freeSpins > 0) {
-      updateHUDTexts(`Pas de gain — free spins : ${freeSpins}`);
-    } else {
-      updateHUDTexts("Pas de gain — appuyez sur SPIN pour relancer");
-    }
+    updateHUDTexts(freeSpins > 0 ? `Pas de gain — free spins : ${freeSpins}` : "Pas de gain — appuyez sur SPIN pour relancer");
   }
 
   if (bonusTriggered) {
@@ -874,7 +746,7 @@ function finishSpin(win, winningLines, bonusTriggered) {
 }
 
 // --------------------------------------------------
-// Boutons mise
+// Mise
 // --------------------------------------------------
 function onBetMinus() {
   if (spinning) return;
