@@ -1,5 +1,12 @@
 // script.js
 // Slot mobile PIXI v5 – 5x3, 5 lignes, free spins + nouveau mapping
+// + FIX texture bleeding (clamp + mipmaps off + roundPixels + PAD inside rect)
+
+// --------------------------------------------------
+// PIXI global settings (IMPORTANT)
+// --------------------------------------------------
+PIXI.settings.ROUND_PIXELS = true;
+PIXI.settings.MIPMAP_TEXTURES = PIXI.MIPMAP_MODES.OFF;
 
 // --------------------------------------------------
 // DOM & globales
@@ -162,6 +169,13 @@ function loadSpritesheet() {
     img.onload = () => {
       try {
         const baseTexture = PIXI.BaseTexture.from(img);
+
+        // ---- FIX bleeding ----
+        baseTexture.mipmap = PIXI.MIPMAP_MODES.OFF;
+        baseTexture.wrapMode = PIXI.WRAP_MODES.CLAMP;
+        // baseTexture.scaleMode = PIXI.SCALE_MODES.LINEAR; // (optionnel, mais ok)
+        baseTexture.update();
+
         resolve(baseTexture);
       } catch (e) {
         reject(e);
@@ -195,6 +209,9 @@ async function initPixi() {
     antialias: true,
   });
 
+  // (utile pour éviter les “demi pixels”)
+  app.renderer.roundPixels = true;
+
   showMessage("Chargement…");
 
   try {
@@ -206,7 +223,7 @@ async function initPixi() {
     const COLS_SHEET = 3;
     const ROWS_SHEET = 4;
 
-    // Frontières verticales : 0, ~341, ~682, 1024
+    // Frontières verticales : 0, ~341, ~683, 1024
     const colXs = [];
     for (let c = 0; c <= COLS_SHEET; c++) {
       colXs.push(Math.round((fullW / COLS_SHEET) * c));
@@ -221,18 +238,6 @@ async function initPixi() {
     symbolTextures = [];
 
     // --- MAPPING MANUEL 0 → 11 ---
-    // 0 - 77 mauve
-    // 1 - pastèque 
-    // 2 - BAR
-    // 3 - pomme 
-    // 4 - cartes
-    // 5 - couronne 
-    // 6 - BONUS
-    // 7 - cerises 
-    // 8 - pièce 
-    // 9 - WILD
-    // 10- citron 
-    // 11- 7 rouge
     const positions = [
       [0, 0], // 0 : 77 mauve
       [1, 0], // 1 : pastèque
@@ -248,13 +253,23 @@ async function initPixi() {
       [2, 3], // 11 : 7 rouge
     ];
 
+    // ---- FIX bleeding : on rogne 2px à l’intérieur de chaque case ----
+    // Si tu vois encore un léger “débordement”, monte PAD à 3.
+    const PAD = 2;
+
     positions.forEach(([c, r]) => {
       const x0 = colXs[c];
       const x1 = colXs[c + 1];
       const y0 = rowYs[r];
       const y1 = rowYs[r + 1];
 
-      const rect = new PIXI.Rectangle(x0, y0, x1 - x0, y1 - y0);
+      const rect = new PIXI.Rectangle(
+        x0 + PAD,
+        y0 + PAD,
+        (x1 - x0) - PAD * 2,
+        (y1 - y0) - PAD * 2
+      );
+
       const tex = new PIXI.Texture(baseTexture, rect);
       symbolTextures.push(tex);
     });
@@ -337,6 +352,8 @@ function buildSlotScene() {
       const idx = Math.floor(Math.random() * symbolTextures.length);
       const texture = symbolTextures[idx];
       const sprite = new PIXI.Sprite(texture);
+
+      sprite.roundPixels = true;
 
       // symbole centré dans sa case
       sprite.anchor.set(0.5);
