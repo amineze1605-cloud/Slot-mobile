@@ -239,6 +239,43 @@ async function initPixi() {
   }
 }
 
+function applySpriteFX(sprite, symbolId) {
+  // Ombre douce (simple)
+  sprite.filters = sprite.filters || [];
+
+  // Glow couleur selon symbole
+  let color = GLOW_COLORS.default;
+  let preset = VISUALS.symbolGlow;
+
+  if (symbolId === WILD_ID) { color = GLOW_COLORS.wild; preset = VISUALS.premiumGlow; }
+  if (symbolId === BONUS_ID) { color = GLOW_COLORS.bonus; preset = VISUALS.premiumGlow; }
+  if (symbolId === 0) { color = GLOW_COLORS.premium77; preset = VISUALS.premiumGlow; }
+
+  const glow = new PIXI.filters.GlowFilter({
+    distance: preset.distance,
+    outerStrength: preset.outerStrength,
+    innerStrength: preset.innerStrength,
+    color,
+    quality: preset.quality,
+  });
+
+  // petite shadow (avec blur filter basique)
+  const shadow = new PIXI.filters.DropShadowFilter({
+    alpha: VISUALS.shadowAlpha,
+    blur: 2,
+    distance: 2,
+    rotation: 45,
+  });
+
+  sprite.filters = [shadow, glow];
+}
+
+function getSymbolIdFromTexture(tex) {
+  // on retrouve l'index dans symbolTextures (ça marche car tu réutilises les mêmes textures)
+  const idx = symbolTextures.indexOf(tex);
+  return idx >= 0 ? idx : -1;
+}
+
 // --------------------------------------------------
 // Construction scène slot
 // --------------------------------------------------
