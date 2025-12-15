@@ -186,52 +186,45 @@ async function initPixi() {
     const fullW = baseTexture.width;
     const fullH = baseTexture.height;
 
-    // ✅ Ton nouveau spritesheet : 4 colonnes x 4 lignes (1024x1024)
-    const COLS_SHEET = 4;
-    const ROWS_SHEET = 4;
+    // Ton spritesheet : 4 colonnes x 4 lignes (1024x1024 => 256x256)
+const COLS_SHEET = 4;
+const ROWS_SHEET = 4;
 
-    const tileW = Math.round(fullW / COLS_SHEET); // 256
-    const tileH = Math.round(fullH / ROWS_SHEET); // 256
+const cellW = Math.floor(fullW / COLS_SHEET); // 256
+const cellH = Math.floor(fullH / ROWS_SHEET); // 256
 
-    // Mapping (selon ton image) :
-    // Row 0: 77, pasteque, BAR, pomme
-    // Row 1: cartes, couronne, BONUS, cerises
-    // Row 2: piece, WILD, citron, 7 rouge
-    const positions = [
-      [0, 0], // 0 : 77 mauve
-      [1, 0], // 1 : pastèque
-      [2, 0], // 2 : BAR
-      [3, 0], // 3 : pomme
+symbolTextures = [];
 
-      [0, 1], // 4 : cartes
-      [1, 1], // 5 : couronne
-      [2, 1], // 6 : BONUS
-      [3, 1], // 7 : cerises
+// Ordre des symboles dans TON spritesheet 4x4 (3 lignes remplies)
+const positions = [
+  [0, 0], // 0 : 77 mauve
+  [1, 0], // 1 : pastèque
+  [2, 0], // 2 : BAR
+  [3, 0], // 3 : pomme
 
-      [0, 2], // 8 : pièce
-      [1, 2], // 9 : WILD
-      [2, 2], // 10 : citron
-      [3, 2], // 11 : 7 rouge
-    ];
+  [0, 1], // 4 : cartes
+  [1, 1], // 5 : couronne
+  [2, 1], // 6 : BONUS
+  [3, 1], // 7 : cerises
 
-    // PAD anti-bleeding (évite de “prendre” le pixel voisin)
-    // Comme tes cases sont propres, 1 px suffit (2 si tu vois encore un trait).
-    const PAD = 1;
+  [0, 2], // 8 : pièce
+  [1, 2], // 9 : WILD
+  [2, 2], // 10 : citron
+  [3, 2], // 11 : 7 rouge
+];
 
-    symbolTextures = [];
-    positions.forEach(([c, r]) => {
-      const x = c * tileW;
-      const y = r * tileH;
+// Mets PAD à 0 pour tester (puis 1 si tu vois un mini bleeding)
+const PAD = 0;
 
-      const rect = new PIXI.Rectangle(
-        x + PAD,
-        y + PAD,
-        tileW - PAD * 2,
-        tileH - PAD * 2
-      );
-
-      symbolTextures.push(new PIXI.Texture(baseTexture, rect));
-    });
+positions.forEach(([c, r]) => {
+  const rect = new PIXI.Rectangle(
+    c * cellW + PAD,
+    r * cellH + PAD,
+    cellW - PAD * 2,
+    cellH - PAD * 2
+  );
+  symbolTextures.push(new PIXI.Texture(baseTexture, rect));
+});
 
     if (!symbolTextures.length) {
       showMessage("Erreur JS : spritesheet vide");
