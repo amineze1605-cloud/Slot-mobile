@@ -1,14 +1,15 @@
 // script.js
 // Slot mobile PIXI v5 – 5x3, 5 lignes, free spins + mapping 4x4 (1024)
-// ✅ FIX iPhone: autoDensity + resolution (DPR) MAIS layout basé sur app.screen.*
+// ✅ FIX iPhone: autoDensity + resolution (DPR) + layout basé sur app.screen.*
 // ✅ Anti-bleeding: clamp + mipmaps off + PAD
+// ✅ VISUEL: GlowFilter (point 1) + application à la création (point 2) + après spin (point 3)
 
 // --------------------------------------------------
 // PIXI global settings (IMPORTANT)
 // --------------------------------------------------
 PIXI.settings.ROUND_PIXELS = true;
 PIXI.settings.MIPMAP_TEXTURES = PIXI.MIPMAP_MODES.OFF;
-PIXI.settings.SCALE_MODE = PIXI.SCALE_MODES.LINEAR; // plus "smooth"
+PIXI.settings.SCALE_MODE = PIXI.SCALE_MODES.LINEAR;
 
 // --------------------------------------------------
 // DOM & globales
@@ -52,13 +53,35 @@ const VISUALS = {
   shadowAlpha: 0.35,
 };
 
-// couleurs (tu peux changer)
 const GLOW_COLORS = {
   default: 0xffffff,
-  wild: 0x2bff5a,   // vert
-  bonus: 0x3aa6ff,  // bleu
+  wild: 0x2bff5a,      // vert
+  bonus: 0x3aa6ff,     // bleu
   premium77: 0xd45bff, // violet
 };
+
+// ✅ POINT 1: fonction FX
+function applySpriteFX(sprite, symbolId) {
+  // sécurité si pixi-filters pas chargé
+  if (!PIXI.filters || !PIXI.filters.GlowFilter) return;
+
+  let color = GLOW_COLORS.default;
+  let preset = VISUALS.symbolGlow;
+
+  if (symbolId === WILD_ID) { color = GLOW_COLORS.wild; preset = VISUALS.premiumGlow; }
+  if (symbolId === BONUS_ID) { color = GLOW_COLORS.bonus; preset = VISUALS.premiumGlow; }
+  if (symbolId === 0) { color = GLOW_COLORS.premium77; preset = VISUALS.premiumGlow; }
+
+  const glow = new PIXI.filters.GlowFilter({
+    distance: preset.distance,
+    outerStrength: preset.outerStrength,
+    innerStrength: preset.innerStrength,
+    color,
+    quality: preset.quality,
+  });
+
+  sprite.filters = [glow];
+}
 
 // --------------------------------------------------
 // AUDIO
@@ -96,16 +119,16 @@ const PAYLINES = [
 ];
 
 const PAYTABLE = {
-  1:  { 3: 2, 4: 3, 5: 4 },   // pastèque
-  3:  { 3: 2, 4: 3, 5: 4 },   // pomme
-  7:  { 3: 2, 4: 3, 5: 4 },   // cerises
-  10: { 3: 2, 4: 3, 5: 4 },   // citron
-  4:  { 3: 3, 4: 4, 5: 5 },   // cartes
-  8:  { 3: 4, 4: 5, 5: 6 },   // pièce
-  5:  { 3: 10, 4: 12, 5: 14 },// couronne
-  2:  { 3: 16, 4: 18, 5: 20 },// BAR
-  11: { 3: 20, 4: 25, 5: 30 },// 7 rouge
-  0:  { 3: 30, 4: 40, 5: 50 },// 77 mauve
+  1:  { 3: 2, 4: 3, 5: 4 },    // pastèque
+  3:  { 3: 2, 4: 3, 5: 4 },    // pomme
+  7:  { 3: 2, 4: 3, 5: 4 },    // cerises
+  10: { 3: 2, 4: 3, 5: 4 },    // citron
+  4:  { 3: 3, 4: 4, 5: 5 },    // cartes
+  8:  { 3: 4, 4: 5, 5: 6 },    // pièce
+  5:  { 3: 10, 4: 12, 5: 14 }, // couronne
+  2:  { 3: 16, 4: 18, 5: 20 }, // BAR
+  11: { 3: 20, 4: 25, 5: 30 }, // 7 rouge
+  0:  { 3: 30, 4: 40, 5: 50 }, // 77 mauve
 };
 
 // --------------------------------------------------
@@ -219,11 +242,8 @@ async function initPixi() {
 
     app.ticker.add(updateHighlight);
 
-    // Optionnel: si tu rotates le téléphone, rebuild
+    // resize -> rebuild propre
     window.addEventListener("resize", () => {
-      // simple et safe: reload
-      // location.reload();
-      // ou rebuild léger:
       app.stage.removeChildren();
       reels = [];
       highlightedSprites = [];
@@ -239,48 +259,11 @@ async function initPixi() {
   }
 }
 
-function applySpriteFX(sprite, symbolId) {
-  // Ombre douce (simple)
-  sprite.filters = sprite.filters || [];
-
-  // Glow couleur selon symbole
-  let color = GLOW_COLORS.default;
-  let preset = VISUALS.symbolGlow;
-
-  if (symbolId === WILD_ID) { color = GLOW_COLORS.wild; preset = VISUALS.premiumGlow; }
-  if (symbolId === BONUS_ID) { color = GLOW_COLORS.bonus; preset = VISUALS.premiumGlow; }
-  if (symbolId === 0) { color = GLOW_COLORS.premium77; preset = VISUALS.premiumGlow; }
-
-  const glow = new PIXI.filters.GlowFilter({
-    distance: preset.distance,
-    outerStrength: preset.outerStrength,
-    innerStrength: preset.innerStrength,
-    color,
-    quality: preset.quality,
-  });
-
-  // petite shadow (avec blur filter basique)
-  const shadow = new PIXI.filters.DropShadowFilter({
-    alpha: VISUALS.shadowAlpha,
-    blur: 2,
-    distance: 2,
-    rotation: 45,
-  });
-
-  sprite.filters = [shadow, glow];
-}
-
-function getSymbolIdFromTexture(tex) {
-  // on retrouve l'index dans symbolTextures (ça marche car tu réutilises les mêmes textures)
-  const idx = symbolTextures.indexOf(tex);
-  return idx >= 0 ? idx : -1;
-}
-
 // --------------------------------------------------
 // Construction scène slot
 // --------------------------------------------------
 function buildSlotScene() {
-  // ✅ IMPORTANT: utiliser app.screen (CSS pixels), pas renderer.width/height (retina pixels)
+  // ✅ layout en CSS pixels (sinon ça “zoome/coupe” avec DPR)
   const w = app.screen.width;
   const h = app.screen.height;
 
@@ -329,6 +312,9 @@ function buildSlotScene() {
       const idx = Math.floor(Math.random() * symbolTextures.length);
       const sprite = new PIXI.Sprite(symbolTextures[idx]);
 
+      // ✅ POINT 2: glow à la création
+      applySpriteFX(sprite, idx);
+
       sprite.roundPixels = true;
       sprite.anchor.set(0.5);
 
@@ -350,7 +336,7 @@ function buildSlotScene() {
 // HUD + boutons
 // --------------------------------------------------
 function makeText(txt, size, y, alignCenter = true) {
-  const w = app.screen.width; // ✅
+  const w = app.screen.width;
   const style = new PIXI.TextStyle({
     fontFamily: "system-ui",
     fontSize: size,
@@ -401,8 +387,8 @@ function makeButton(label, width, height) {
 }
 
 function buildHUD() {
-  const w = app.screen.width;  // ✅
-  const h = app.screen.height; // ✅
+  const w = app.screen.width;
+  const h = app.screen.height;
 
   messageText = makeText("Appuyez sur SPIN pour lancer", Math.round(h * 0.035), h * 0.1);
 
@@ -453,8 +439,8 @@ function updateHUDNumbers() {
 // Paytable overlay
 // --------------------------------------------------
 function createPaytableOverlay() {
-  const w = app.screen.width;  // ✅
-  const h = app.screen.height; // ✅
+  const w = app.screen.width;
+  const h = app.screen.height;
 
   const container = new PIXI.Container();
   container.visible = false;
@@ -481,12 +467,11 @@ function createPaytableOverlay() {
   panel.interactive = true;
   container.addChild(panel);
 
-  const styleTitle = new PIXI.TextStyle({
+  const title = new PIXI.Text("Table des gains", new PIXI.TextStyle({
     fontFamily: "system-ui",
     fontSize: Math.round(h * 0.035),
     fill: 0xffffff,
-  });
-  const title = new PIXI.Text("Table des gains", styleTitle);
+  }));
   title.anchor.set(0.5, 0);
   title.x = w / 2;
   title.y = panelY + marginY;
@@ -495,15 +480,6 @@ function createPaytableOverlay() {
   const smallScreen = h < 750;
   const baseFontSize = smallScreen ? Math.round(h * 0.022) : Math.round(h * 0.026);
   const baseLineHeight = smallScreen ? Math.round(h * 0.026) : Math.round(h * 0.031);
-
-  const styleBody = new PIXI.TextStyle({
-    fontFamily: "system-ui",
-    fontSize: baseFontSize,
-    fill: 0xffffff,
-    wordWrap: true,
-    wordWrapWidth: panelWidth * 0.8,
-    lineHeight: baseLineHeight,
-  });
 
   const bodyText =
     "Fruits (pastèque, pomme, cerises, citron) :\n" +
@@ -519,7 +495,14 @@ function createPaytableOverlay() {
     "WILD : remplace tout sauf BONUS\n" +
     "BONUS : 3+ déclenchent 10 free spins (gains ×2)";
 
-  const body = new PIXI.Text(bodyText, styleBody);
+  const body = new PIXI.Text(bodyText, new PIXI.TextStyle({
+    fontFamily: "system-ui",
+    fontSize: baseFontSize,
+    fill: 0xffffff,
+    wordWrap: true,
+    wordWrapWidth: panelWidth * 0.8,
+    lineHeight: baseLineHeight,
+  }));
   body.anchor.set(0.5, 0);
   body.x = w / 2;
   body.y = title.y + title.height + marginY;
@@ -569,12 +552,17 @@ function togglePaytable(forceVisible) {
 // --------------------------------------------------
 function applyResultToReels(grid) {
   if (!Array.isArray(grid) || grid.length !== ROWS) return;
+
   for (let r = 0; r < ROWS; r++) {
     for (let c = 0; c < COLS; c++) {
       const value = grid[r][c];
       const reel = reels[c];
       if (!reel || !reel.symbols[r]) continue;
+
       reel.symbols[r].texture = getTextureByIndex(value);
+
+      // ✅ POINT 3: glow après le spin
+      applySpriteFX(reel.symbols[r], value);
     }
   }
 }
