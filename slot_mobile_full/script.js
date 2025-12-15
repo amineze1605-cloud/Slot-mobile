@@ -45,6 +45,21 @@ let paytableOverlay = null;
 let highlightedSprites = [];
 let highlightTimer = 0;
 
+// ---------------- VISUEL (Glow) ----------------
+const VISUALS = {
+  symbolGlow: { distance: 10, outerStrength: 1.2, innerStrength: 0.2, quality: 0.35 },
+  premiumGlow: { distance: 14, outerStrength: 2.2, innerStrength: 0.4, quality: 0.45 },
+  shadowAlpha: 0.35,
+};
+
+// couleurs (tu peux changer)
+const GLOW_COLORS = {
+  default: 0xffffff,
+  wild: 0x2bff5a,   // vert
+  bonus: 0x3aa6ff,  // bleu
+  premium77: 0xd45bff, // violet
+};
+
 // --------------------------------------------------
 // AUDIO
 // --------------------------------------------------
