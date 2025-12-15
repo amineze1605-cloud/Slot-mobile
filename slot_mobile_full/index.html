@@ -17,6 +17,19 @@
   <div id="loader">Chargement…</div>
   <canvas id="game"></canvas>
 
+<!-- PIXI.JS -->
+<script src="https://pixijs.download/v5.3.10/pixi.min.js"></script>
+
+<!-- PIXI FILTERS (GlowFilter, etc.) -->
+<script src="https://cdn.jsdelivr.net/npm/pixi-filters@4.2.0/dist/pixi-filters.min.js"></script>
+```  [oai_citation:0‡jqueryscript.net](https://www.jqueryscript.net/blog/Weekly-Web-Design-Development-News-Collective-411.html?utm_source=chatgpt.com)
+
+## 2) Comment savoir si tu as GlowFilter
+Dans `script.js` (au tout début, par exemple), mets :
+
+```js
+console.log("GlowFilter dispo ?", !!(PIXI.filters && PIXI.filters.GlowFilter));
+
   <!-- Affichage des erreurs JS en plein écran -->
   <script>
     window.addEventListener("error", function (e) {
