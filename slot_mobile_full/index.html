@@ -8,37 +8,126 @@
   />
   <title>Slot Mobile</title>
 
-  <!-- PIXI.JS -->
+  <!-- PIXI.JS v5 -->
   <script src="https://pixijs.download/v5.3.10/pixi.min.js"></script>
 
+  <!-- PIXI FILTERS (GlowFilter, etc.) -->
+  <script src="https://cdn.jsdelivr.net/npm/pixi-filters@4.2.0/dist/pixi-filters.min.js"></script>
+
   <link rel="stylesheet" href="style.css" />
+
+  <style>
+    /* Mini console overlay */
+    #miniConsole {
+      position: fixed;
+      left: 8px;
+      right: 8px;
+      bottom: 8px;
+      max-height: 42vh;
+      overflow: auto;
+      background: rgba(0,0,0,0.75);
+      color: #e5e7eb;
+      font: 12px/1.35 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      padding: 8px;
+      border: 1px solid rgba(255,255,255,0.15);
+      border-radius: 10px;
+      z-index: 99999;
+      white-space: pre-wrap;
+      -webkit-overflow-scrolling: touch;
+      display: none; /* caché par défaut */
+    }
+    #miniConsole .line { margin: 2px 0; }
+    #miniConsole .log  { color: #e5e7eb; }
+    #miniConsole .warn { color: #fbbf24; }
+    #miniConsole .err  { color: #fb7185; }
+    #miniConsoleToggle {
+      position: fixed;
+      right: 10px;
+      bottom: 10px;
+      z-index: 100000;
+      background: rgba(17,24,39,0.9);
+      color: #fff;
+      border: 1px solid rgba(255,255,255,0.2);
+      border-radius: 12px;
+      padding: 8px 10px;
+      font: 13px system-ui, -apple-system, Segoe UI, sans-serif;
+    }
+  </style>
 </head>
 <body>
   <div id="loader">Chargement…</div>
   <canvas id="game"></canvas>
 
-<!-- PIXI.JS -->
-<script src="https://pixijs.download/v5.3.10/pixi.min.js"></script>
+  <!-- Mini console -->
+  <div id="miniConsole"></div>
+  <button id="miniConsoleToggle" type="button">Console</button>
 
-<!-- PIXI FILTERS (GlowFilter, etc.) -->
-<script src="https://cdn.jsdelivr.net/npm/pixi-filters@4.2.0/dist/pixi-filters.min.js"></script>
-```  [oai_citation:0‡jqueryscript.net](https://www.jqueryscript.net/blog/Weekly-Web-Design-Development-News-Collective-411.html?utm_source=chatgpt.com)
-
-## 2) Comment savoir si tu as GlowFilter
-Dans `script.js` (au tout début, par exemple), mets :
-
-```js
-console.log("GlowFilter dispo ?", !!(PIXI.filters && PIXI.filters.GlowFilter));
-
-  <!-- Affichage des erreurs JS en plein écran -->
   <script>
-    window.addEventListener("error", function (e) {
-      var loader = document.getElementById("loader");
-      if (loader) {
-        loader.style.display = "flex";
-        loader.textContent = "Erreur JS : " + e.message;
+    (function () {
+      var box = document.getElementById("miniConsole");
+      var btn = document.getElementById("miniConsoleToggle");
+
+      function safeToString(v) {
+        try {
+          if (v instanceof Error) return v.stack || v.message || String(v);
+          if (typeof v === "object") return JSON.stringify(v);
+          return String(v);
+        } catch (e) {
+          return String(v);
+        }
       }
-    });
+
+      function addLine(type, args) {
+        if (!box) return;
+        var div = document.createElement("div");
+        div.className = "line " + type;
+        var parts = [];
+        for (var i = 0; i < args.length; i++) parts.push(safeToString(args[i]));
+        div.textContent = "[" + type.toUpperCase() + "] " + parts.join(" ");
+        box.appendChild(div);
+        box.scrollTop = box.scrollHeight;
+      }
+
+      // Toggle
+      if (btn) {
+        btn.addEventListener("click", function () {
+          if (!box) return;
+          box.style.display = (box.style.display === "none" ? "block" : "none");
+        });
+      }
+
+      // Hook console.*
+      var _log = console.log;
+      var _warn = console.warn;
+      var _error = console.error;
+
+      console.log = function () {
+        addLine("log", arguments);
+        _log.apply(console, arguments);
+      };
+      console.warn = function () {
+        addLine("warn", arguments);
+        _warn.apply(console, arguments);
+      };
+      console.error = function () {
+        addLine("err", arguments);
+        _error.apply(console, arguments);
+      };
+
+      // Global errors
+      window.addEventListener("error", function (e) {
+        var msg = e && e.message ? e.message : "Erreur inconnue";
+        console.error("Erreur JS:", msg);
+      });
+
+      window.addEventListener("unhandledrejection", function (e) {
+        console.error("Erreur Promise:", e && e.reason ? e.reason : "inconnue");
+      });
+
+      // Petit test utile
+      console.log("PIXI OK:", !!window.PIXI);
+      console.log("GlowFilter dispo:", !!(window.PIXI && PIXI.filters && PIXI.filters.GlowFilter));
+    })();
   </script>
 
   <!-- Ton jeu -->
