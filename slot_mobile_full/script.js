@@ -412,6 +412,33 @@ function applyFinalReel(col, finalGrid) {
 // --------------------------------------------------
 // (C) animation visuelle du spin (smooth + arrêt en cascade)
 // --------------------------------------------------
+function easeInCubic(t) { return t * t * t; }
+function easeOutCubic(t) { return 1 - Math.pow(1 - t, 3); }
+
+function reelBounce(reelContainer, ampPx, durationMs) {
+  const startY = reelContainer.y;
+  const start = performance.now();
+
+  return new Promise((resolve) => {
+    function tick(now) {
+      const t = Math.min(1, (now - start) / durationMs);
+
+      // rebond doux: petite oscillation amortie
+      const osc = Math.sin(t * Math.PI);      // 0 -> 1 -> 0
+      const damp = 1 - t;                     // amortissement
+      reelContainer.y = startY + (-ampPx * osc * damp);
+
+      if (t >= 1) {
+        reelContainer.y = startY;
+        resolve();
+        return;
+      }
+      requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(tick);
+  });
+}
+
 function animateSpinVisual(finalGrid) {
   const sp = getSpeedPreset();
 
