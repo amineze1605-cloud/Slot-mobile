@@ -331,15 +331,18 @@ function applySymbolVisual(cellObj, symbolId) {
   if (!glowFilters) return;
 
   if (symbolId === WILD_ID) {
-    cellObj.glow.visible = true;
-    cellObj.glow.filters = [glowFilters.wild];
-  } else if (symbolId === BONUS_ID) {
-    cellObj.glow.visible = true;
-    cellObj.glow.filters = [glowFilters.bonus];
-  } else if (symbolId === PREMIUM77_ID) {
-    cellObj.glow.visible = true;
-    cellObj.glow.filters = [glowFilters.premium];
-  }
+  cellObj.glow.alpha = 0.45;
+  cellObj.glow.visible = true;
+  cellObj.glow.filters = [glowFilters.wild];
+} else if (symbolId === BONUS_ID) {
+  cellObj.glow.alpha = 0.45;
+  cellObj.glow.visible = true;
+  cellObj.glow.filters = [glowFilters.bonus];
+} else if (symbolId === PREMIUM77_ID) {
+  cellObj.glow.alpha = 0.55;
+  cellObj.glow.visible = true;
+  cellObj.glow.filters = [glowFilters.premium];
+}
 }
 
 // --------------------------------------------------
