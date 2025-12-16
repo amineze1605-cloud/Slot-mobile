@@ -54,10 +54,9 @@ let highlightTimer = 0;
 // (A) Vitesses de spin (3 modes)
 // --------------------------------------------------
 const SPEED_PRESETS = [
-  // plus lent = plus long + ralentissement plus visible
-  { key: "SLOW",   label: "LENT",   totalSpinMs: 1250, shuffleMinMs: 70, slowDownMs: 450, stopStaggerMs: 140 },
-  { key: "NORM",   label: "NORMAL", totalSpinMs: 850,  shuffleMinMs: 55, slowDownMs: 320, stopStaggerMs: 100 },
-  { key: "FAST",   label: "RAPIDE", totalSpinMs: 600,  shuffleMinMs: 40, slowDownMs: 240, stopStaggerMs: 80  },
+  { key: "SLOW", label: "LENT",   totalSpinMs: 1250, shuffleMinMs: 70, slowDownMs: 450, startUpMs: 260, stopStaggerMs: 140, bouncePx: 7, bounceMs: 160 },
+  { key: "NORM", label: "NORMAL", totalSpinMs: 850,  shuffleMinMs: 55, slowDownMs: 320, startUpMs: 200, stopStaggerMs: 100, bouncePx: 6, bounceMs: 140 },
+  { key: "FAST", label: "RAPIDE", totalSpinMs: 600,  shuffleMinMs: 40, slowDownMs: 240, startUpMs: 160, stopStaggerMs: 80,  bouncePx: 5, bounceMs: 120 },
 ];
 
 let speedIndex = 1; // default NORMAL
