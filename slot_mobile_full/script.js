@@ -23,6 +23,9 @@ let app;
 let symbolTextures = [];
 let reels = [];
 
+const SPIN_VISUAL_MS = 750;     // durée animation
+const SHUFFLE_EVERY_MS = 55;    // vitesse shuffle
+
 const COLS = 5;
 const ROWS = 3;
 
