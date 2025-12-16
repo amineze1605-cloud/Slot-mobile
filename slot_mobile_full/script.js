@@ -1,18 +1,17 @@
 // script.js
 // Slot mobile PIXI v5 – 5x3, 5 lignes, free spins + mapping 4x4 (1024)
-// ✅ FIX iPhone: autoDensity + resolution (DPR) + layout basé sur app.screen.*
-// ✅ Anti-bleeding: clamp + mipmaps off + PAD
-// ✅ VISUEL: Glow propre (copie derrière) => symboles nets, glow seulement 77/WILD/BONUS
+// ✅ iPhone: autoDensity + resolution + SAFE-AREA réel (env safe-area-inset-*)
+// ✅ Layout PRO: positions calculées (message / slot / stats / boutons) => plus de gros trou
+// ✅ Anti-bleeding: clamp + mipmaps off
+// ✅ Glow propre (copie derrière) => symboles nets, glow seulement 77/WILD/BONUS
 // ✅ CAP: ne jamais upscaler au-dessus de 256px (taille source)
-// ✅ MASK FIX: mask sur app.stage (pas enfant du slotContainer) => plus d’écran vide
-// ✅ NO-SWAP (PRO): recyclage des sprites (texture change hors écran) => swap quasi invisible
-// ✅ UI: fond + glass panel (rendu plus pro)
-// ✅ FIX layout: retour aux positions “comme avant” (plus de safeTop qui décale tout)
-// ✅ STOP plus fluide: smoothing de vitesse (vel) + decel plus doux
+// ✅ MASK FIX: mask sur app.stage
+// ✅ NO-SWAP (PRO): recyclage des sprites (texture change hors écran)
+// ✅ STOP plus fluide: vel smoothing + decel plus douce
 // ✅ SPIN un poil plus long
 
 // --------------------------------------------------
-// PIXI global settings (IMPORTANT)
+// PIXI global settings
 // --------------------------------------------------
 PIXI.settings.ROUND_PIXELS = true;
 PIXI.settings.MIPMAP_TEXTURES = PIXI.MIPMAP_MODES.OFF;
@@ -39,7 +38,6 @@ const PREMIUM77_ID = 0;
 // état jeu
 let balance = 1000;
 let bet = 1;
-let lastlastWin = 0;
 let lastWin = 0;
 let spinning = false;
 let freeSpins = 0;
@@ -67,14 +65,54 @@ let glassPanel = null;
 // layout reel
 let symbolSize = 0;
 let reelGap = 8;
-let reelStep = 0;          // symbolSize + gap
+let reelStep = 0;
 let visibleH = 0;
 
+// metrics slot pour redraw
+let slotMetrics = {
+  totalReelWidth: 0,
+  framePaddingX: 18,
+  framePaddingY: 18,
+  frameRadius: 26,
+};
+
 // --------------------------------------------------
-// SAFE AREA (désactivé pour retrouver le layout “comme avant”)
+// SAFE AREA (iOS env safe-area-inset-*)
 // --------------------------------------------------
+function readSafeInsetPx(which /* "top"|"bottom" */) {
+  try {
+    if (!document.body) return 0;
+    const el = document.createElement("div");
+    el.style.position = "fixed";
+    el.style.left = "0";
+    el.style.top = "0";
+    el.style.width = "0";
+    el.style.height = "0";
+    el.style.paddingTop = "env(safe-area-inset-top)";
+    el.style.paddingBottom = "env(safe-area-inset-bottom)";
+    // vieux iOS
+    el.style.paddingTop = "constant(safe-area-inset-top)";
+    el.style.paddingBottom = "constant(safe-area-inset-bottom)";
+    el.style.visibility = "hidden";
+    document.body.appendChild(el);
+    const cs = getComputedStyle(el);
+    const v = which === "bottom" ? parseFloat(cs.paddingBottom) : parseFloat(cs.paddingTop);
+    document.body.removeChild(el);
+    return Math.round(v || 0);
+  } catch {
+    return 0;
+  }
+}
+
 function getSafeTopPx() {
-  return 0;
+  // un mini fallback au cas où env() renvoie 0
+  const v = readSafeInsetPx("top");
+  return Math.max(v, 10);
+}
+
+function getSafeBottomPx() {
+  const v = readSafeInsetPx("bottom");
+  return Math.max(v, 10);
 }
 
 // --------------------------------------------------
@@ -159,7 +197,7 @@ function playSound(name) {
   try {
     s.currentTime = 0;
     s.play().catch(() => {});
-  } catch (e) {}
+  } catch {}
 }
 
 // --------------------------------------------------
@@ -220,13 +258,12 @@ function loadSpritesheet() {
       }
     };
 
-    img.onerror = (e) =>
-      reject(e || new Error("Impossible de charger assets/spritesheet.png"));
+    img.onerror = (e) => reject(e || new Error("Impossible de charger assets/spritesheet.png"));
   });
 }
 
 // --------------------------------------------------
-// GlowFilters (partagés)
+// GlowFilters
 // --------------------------------------------------
 function buildGlowFilters() {
   const hasGlow = !!(PIXI.filters && PIXI.filters.GlowFilter);
@@ -301,7 +338,6 @@ function buildBackground() {
   const h = app.screen.height;
 
   if (bgContainer) { bgContainer.destroy(true); bgContainer = null; }
-
   bgContainer = new PIXI.Container();
 
   const tex = makeGradientTexture(w, h);
@@ -332,33 +368,47 @@ function buildGlassPanel() {
 
   if (glassPanel) { glassPanel.destroy(true); glassPanel = null; }
 
-  // ✅ décor uniquement, ne doit pas dicter le layout
+  glassPanel = new PIXI.Container();
+  glassPanel._base = new PIXI.Graphics();
+  glassPanel._shine = new PIXI.Graphics();
+  glassPanel._gold = new PIXI.Graphics();
+
+  glassPanel.addChild(glassPanel._base, glassPanel._shine, glassPanel._gold);
+  app.stage.addChild(glassPanel);
+
+  // sera redessiné par layoutAll()
+  redrawGlassPanel(0, h);
+}
+
+function redrawGlassPanel(topY, bottomY) {
+  if (!glassPanel) return;
+
+  const w = app.screen.width;
+  const h = app.screen.height;
+
   const padX = Math.round(w * 0.05);
-  const topY = Math.round(h * 0.06);
-  const bottomPad = Math.round(h * 0.04);
   const panelW = Math.round(w - padX * 2);
-  const panelH = Math.round(h - topY - bottomPad);
+  const panelH = Math.max(10, Math.round(bottomY - topY));
   const radius = Math.round(Math.min(w, h) * 0.045);
 
-  glassPanel = new PIXI.Container();
+  const base = glassPanel._base;
+  const shine = glassPanel._shine;
+  const gold = glassPanel._gold;
 
-  const base = new PIXI.Graphics();
+  base.clear();
   base.beginFill(0x0a1026, 0.35);
   base.lineStyle(2, 0xffffff, 0.10);
   base.drawRoundedRect(padX, topY, panelW, panelH, radius);
   base.endFill();
 
-  const shine = new PIXI.Graphics();
+  shine.clear();
   shine.beginFill(0xffffff, 0.05);
-  shine.drawRoundedRect(padX + 10, topY + 10, panelW - 20, Math.round(panelH * 0.18), radius - 10);
+  shine.drawRoundedRect(padX + 10, topY + 10, panelW - 20, Math.round(panelH * 0.18), Math.max(8, radius - 10));
   shine.endFill();
 
-  const gold = new PIXI.Graphics();
+  gold.clear();
   gold.lineStyle(2, 0xf2b632, 0.20);
-  gold.drawRoundedRect(padX + 3, topY + 3, panelW - 6, panelH - 6, radius - 3);
-
-  glassPanel.addChild(base, shine, gold);
-  app.stage.addChild(glassPanel);
+  gold.drawRoundedRect(padX + 3, topY + 3, panelW - 6, panelH - 6, Math.max(8, radius - 3));
 }
 
 // --------------------------------------------------
@@ -406,15 +456,8 @@ async function initPixi() {
       [0, 2], [1, 2], [2, 2], [3, 2],
     ];
 
-    const PAD = 0;
-
     symbolTextures = positions.map(([c, r]) => {
-      const rect = new PIXI.Rectangle(
-        c * cellW + PAD,
-        r * cellH + PAD,
-        cellW - PAD * 2,
-        cellH - PAD * 2
-      );
+      const rect = new PIXI.Rectangle(c * cellW, r * cellH, cellW, cellH);
       return new PIXI.Texture(baseTexture, rect);
     });
 
@@ -425,15 +468,17 @@ async function initPixi() {
 
     glowFilters = buildGlowFilters();
 
-    // ordre important
     buildBackground();
     buildGlassPanel();
     buildSlotScene();
     buildHUD();
 
-    // ✅ force l'ordre des layers: bg (0), glass (1)
+    // ordre stable
     if (bgContainer) app.stage.setChildIndex(bgContainer, 0);
     if (glassPanel) app.stage.setChildIndex(glassPanel, 1);
+
+    // ✅ layout pro calculé (plus de trous)
+    layoutAll();
 
     hideMessage();
     updateHUDTexts("Appuyez sur SPIN pour lancer");
@@ -474,6 +519,8 @@ function rebuildAll() {
 
     if (bgContainer) app.stage.setChildIndex(bgContainer, 0);
     if (glassPanel) app.stage.setChildIndex(glassPanel, 1);
+
+    layoutAll();
   } catch (e) {
     console.error("Resize rebuild error:", e);
   }
@@ -550,8 +597,26 @@ function setCellSymbol(cellObj, symbolId) {
 }
 
 // --------------------------------------------------
-// Construction slot + mask + 5 sprites par reel
+// Slot: build + redraw frame
 // --------------------------------------------------
+function drawSlotFrame() {
+  if (!slotFrame || !slotContainer) return;
+
+  const { totalReelWidth, framePaddingX, framePaddingY, frameRadius } = slotMetrics;
+
+  slotFrame.clear();
+  slotFrame.lineStyle(6, 0xf2b632, 1);
+  slotFrame.beginFill(0x060b1a, 0.72);
+  slotFrame.drawRoundedRect(
+    slotContainer.x - framePaddingX,
+    slotContainer.y - framePaddingY,
+    totalReelWidth + framePaddingX * 2,
+    visibleH + framePaddingY * 2,
+    frameRadius
+  );
+  slotFrame.endFill();
+}
+
 function buildSlotScene() {
   const w = app.screen.width;
   const h = app.screen.height;
@@ -560,7 +625,8 @@ function buildSlotScene() {
   const maxTotalWidth = w - sideMargin * 2;
   reelGap = 8;
 
-  const symbolFromHeight = h * 0.16;
+  // taille symbole basée sur largeur + un peu sur hauteur
+  const symbolFromHeight = h * 0.17;
   const symbolFromWidth = (maxTotalWidth - reelGap * (COLS - 1)) / COLS;
 
   const MAX_SYMBOL_PX = 256;
@@ -570,42 +636,22 @@ function buildSlotScene() {
   visibleH = ROWS * reelStep - reelGap;
 
   const totalReelWidth = COLS * symbolSize + reelGap * (COLS - 1);
+  slotMetrics.totalReelWidth = totalReelWidth;
 
   slotContainer = new PIXI.Container();
   slotContainer.x = Math.round((w - totalReelWidth) / 2);
-
-  // ✅ retour au layout “comme avant”
-  slotContainer.y = Math.round(h * 0.22);
-
-  // Frame
-  const framePaddingX = 18;
-  const framePaddingY = 18;
+  slotContainer.y = 0; // sera posé par layoutAll()
 
   slotFrame = new PIXI.Graphics();
-  slotFrame.lineStyle(6, 0xf2b632, 1);
-  slotFrame.beginFill(0x060b1a, 0.72);
-  slotFrame.drawRoundedRect(
-    slotContainer.x - framePaddingX,
-    slotContainer.y - framePaddingY,
-    totalReelWidth + framePaddingX * 2,
-    visibleH + framePaddingY * 2,
-    26
-  );
-  slotFrame.endFill();
-
   app.stage.addChild(slotFrame);
   app.stage.addChild(slotContainer);
 
   // MASK
-  if (slotMask) { slotMask.destroy(true); slotMask = null; }
   slotMask = new PIXI.Graphics();
   slotMask.beginFill(0xffffff, 1);
   slotMask.drawRect(0, 0, totalReelWidth, visibleH);
   slotMask.endFill();
-  slotMask.x = slotContainer.x;
-  slotMask.y = slotContainer.y;
   slotMask.renderable = false;
-
   app.stage.addChild(slotMask);
   slotContainer.mask = slotMask;
 
@@ -637,10 +683,7 @@ function buildSlotScene() {
       container: reelContainer,
       symbols: cells,
       offset: 0,
-
-      // smoothing
       vel: 0,
-
       settled: false,
       settleQueue: null,
       settleStepsLeft: 0,
@@ -773,48 +816,22 @@ function buildHUD() {
   const w = app.screen.width;
   const h = app.screen.height;
 
-  // ✅ retour au layout “comme avant”
   messageText = makeText(
     "Appuyez sur SPIN pour lancer",
     Math.round(h * 0.035),
-    Math.round(h * 0.10)
+    60
   );
 
-  statsText = makeText("", Math.round(h * 0.028), Math.round(h * 0.72));
+  statsText = makeText("", Math.round(h * 0.028), 0);
   statsText.anchor.set(0.5, 0.5);
 
-  const buttonWidth = w * 0.26;
-  const buttonHeight = h * 0.07;
-  const spacingX = w * 0.06;
-  const buttonsY = Math.round(h * 0.82);
+  // boutons (les positions seront set dans layoutAll)
+  btnMinus = makeButton("-1", w * 0.26, h * 0.07);
+  btnSpin  = makeButton("SPIN", w * 0.26, h * 0.07);
+  btnPlus  = makeButton("+1", w * 0.26, h * 0.07);
 
-  btnMinus = makeButton("-1", buttonWidth, buttonHeight);
-  btnSpin  = makeButton("SPIN", buttonWidth, buttonHeight);
-  btnPlus  = makeButton("+1", buttonWidth, buttonHeight);
-
-  btnSpin.x = w / 2;
-  btnSpin.y = buttonsY;
-
-  btnMinus.x = btnSpin.x - (buttonWidth + spacingX);
-  btnMinus.y = buttonsY;
-
-  btnPlus.x = btnSpin.x + (buttonWidth + spacingX);
-  btnPlus.y = buttonsY;
-
-  const secondY = buttonsY + buttonHeight + Math.round(h * 0.02);
-
-  btnSpeed = makeSpeedButton(buttonWidth, buttonHeight * 0.90);
-  btnSpeed.x = btnSpin.x;
-  btnSpeed.y = secondY;
-
-  btnInfo = makeButton("INFO", buttonWidth * 0.90, buttonHeight * 0.90);
-  btnInfo.x = btnPlus.x;
-  btnInfo.y = secondY;
-
-  const safeRight = w - w * 0.03;
-  if (btnInfo.x + (buttonWidth * 0.90) / 2 > safeRight) {
-    btnInfo.x = safeRight - (buttonWidth * 0.90) / 2;
-  }
+  btnSpeed = makeSpeedButton(w * 0.26, (h * 0.07) * 0.90);
+  btnInfo  = makeButton("INFO", (w * 0.26) * 0.90, (h * 0.07) * 0.90);
 
   btnMinus.on("pointerup", onBetMinus);
   btnPlus.on("pointerup", onBetPlus);
@@ -839,7 +856,90 @@ function updateHUDNumbers() {
 }
 
 // --------------------------------------------------
-// Paytable overlay (identique à avant, raccourci ici)
+// ✅ LAYOUT PRO (corrige ton “affichage pas bon”)
+// --------------------------------------------------
+function layoutAll() {
+  if (!app) return;
+
+  const w = app.screen.width;
+  const h = app.screen.height;
+
+  const safeTop = getSafeTopPx();
+  const safeBottom = getSafeBottomPx();
+
+  // tailles boutons
+  const buttonWidth = w * 0.26;
+  const buttonHeight = h * 0.07;
+  const spacingX = w * 0.06;
+  const rowGap = Math.round(h * 0.02);
+  const row2H = buttonHeight * 0.90;
+
+  // place les 2 lignes de boutons “collées au bas” (sans tomber dans la barre iOS)
+  const bottomMargin = Math.max(12, safeBottom + Math.round(h * 0.02));
+
+  const row1Y = Math.round(
+    h - bottomMargin - (row2H + rowGap + buttonHeight / 2)
+  );
+  const row2Y = Math.round(row1Y + buttonHeight / 2 + rowGap + row2H / 2);
+
+  // positions boutons
+  btnSpin.x = w / 2;
+  btnSpin.y = row1Y;
+
+  btnMinus.x = btnSpin.x - (buttonWidth + spacingX);
+  btnMinus.y = row1Y;
+
+  btnPlus.x = btnSpin.x + (buttonWidth + spacingX);
+  btnPlus.y = row1Y;
+
+  btnSpeed.x = btnSpin.x;
+  btnSpeed.y = row2Y;
+
+  btnInfo.x = btnPlus.x;
+  btnInfo.y = row2Y;
+
+  // évite INFO coupé à droite
+  const infoW = buttonWidth * 0.90;
+  const safeRight = w - w * 0.03;
+  if (btnInfo.x + infoW / 2 > safeRight) btnInfo.x = safeRight - infoW / 2;
+
+  // stats juste au-dessus des boutons
+  const statsGap = Math.max(16, Math.round(h * 0.025));
+  const statsY = Math.round(row1Y - buttonHeight / 2 - statsGap);
+  statsText.x = w / 2;
+  statsText.y = statsY;
+
+  // message en haut (safeTop)
+  const msgY = Math.round(safeTop + Math.max(22, h * 0.045));
+  messageText.x = w / 2;
+  messageText.y = msgY;
+
+  // slot “entre” message et stats (plus de trou)
+  const { framePaddingY } = slotMetrics;
+  const topPad = Math.max(14, Math.round(h * 0.02));
+  const bottomPad = Math.max(14, Math.round(h * 0.02));
+
+  const minSlotY = Math.round(msgY + (messageText.height / 2) + topPad);
+  const maxSlotY = Math.round(statsY - bottomPad - (visibleH + framePaddingY));
+
+  // si l'écran est trop petit, on compresse un peu mais on garde propre
+  let slotY = minSlotY;
+  if (maxSlotY > minSlotY) slotY = Math.round(minSlotY + (maxSlotY - minSlotY) * 0.15);
+
+  slotContainer.y = slotY;
+  slotMask.x = slotContainer.x;
+  slotMask.y = slotContainer.y;
+
+  drawSlotFrame();
+
+  // glass panel = zone utile de haut en bas
+  const panelTop = Math.max(8, Math.round(safeTop + 8));
+  const panelBottom = Math.min(h - 8, Math.round(row2Y + row2H / 2 + bottomMargin * 0.35));
+  redrawGlassPanel(panelTop, panelBottom);
+}
+
+// --------------------------------------------------
+// Paytable overlay (comme avant)
 // --------------------------------------------------
 function createPaytableOverlay() {
   const w = app.screen.width;
@@ -1065,7 +1165,7 @@ function easeInOutQuad(t) {
 }
 
 // --------------------------------------------------
-// NO-SWAP PRO: recyclage de sprites (texture change hors écran)
+// NO-SWAP PRO: recyclage de sprites
 // --------------------------------------------------
 function recycleReelOneStepDown(reel, nextTopId) {
   const s = reel.symbols;
@@ -1097,7 +1197,7 @@ function smoothFactor(dt, tauMs) {
 }
 
 // --------------------------------------------------
-// Spin anim (vel smoothing + decel plus douce)
+// Spin anim (vel smoothing + decel douce)
 // --------------------------------------------------
 function animateSpinReels(finalGrid) {
   const preset = SPEEDS[speedIndex];
@@ -1118,10 +1218,8 @@ function animateSpinReels(finalGrid) {
   const plan = reels.map((_, c) => {
     const startAt = startTime + c * preset.startStaggerMs;
     const stopAt  = startAt + preset.spinMs + c * preset.stopStaggerMs;
-
     const settleStart = stopAt - preset.settleMs;
     const preDecelStart = settleStart - preset.preDecelMs;
-
     return { startAt, stopAt, settleStart, preDecelStart };
   });
 
@@ -1140,11 +1238,7 @@ function animateSpinReels(finalGrid) {
         const reel = reels[c];
         const p = plan[c];
 
-        if (now < p.startAt) {
-          allDone = false;
-          continue;
-        }
-
+        if (now < p.startAt) { allDone = false; continue; }
         if (reel.settled) continue;
         allDone = false;
 
@@ -1158,7 +1252,6 @@ function animateSpinReels(finalGrid) {
             const topId = safeId(finalGrid[0][c]);
             const midId = safeId(finalGrid[1][c]);
             const botId = safeId(finalGrid[2][c]);
-
             reel.settleQueue = [botId, midId, topId, randomSymbolId()];
             reel.settleStepsLeft = reel.settleQueue.length;
           }
@@ -1191,7 +1284,6 @@ function animateSpinReels(finalGrid) {
           const targetSpeed = Math.max(0.22, baseNeed * ease);
 
           reel.vel = reel.vel + (targetSpeed - reel.vel) * k;
-
           reel.offset += reel.vel * dt;
 
           while (reel.offset >= reelStep && reel.settleStepsLeft > 0) {
@@ -1204,10 +1296,8 @@ function animateSpinReels(finalGrid) {
           if (reel.settleStepsLeft <= 0) {
             const EPS = 0.6;
             if (reel.offset >= reelStep - EPS) reel.offset = 0;
-
             reel.offset = 0;
             reel.container.y = 0;
-
             reel.bouncing = true;
             reel.bounceStart = now;
             continue;
@@ -1230,7 +1320,6 @@ function animateSpinReels(finalGrid) {
         }
 
         reel.vel = reel.vel + (target - reel.vel) * k;
-
         reel.offset += reel.vel * dt;
 
         while (reel.offset >= reelStep) {
