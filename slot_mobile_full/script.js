@@ -5,6 +5,7 @@
 // ✅ VISUEL: Glow propre (copie derrière) => symboles nets, glow seulement 77/WILD/BONUS
 // ✅ INFO: texte auto-fit => plus de texte caché par le bouton
 // ✅ CAP: ne jamais upscaler au-dessus de 256px (taille source)
+// ✅ SPIN ANIM: shuffle rapide + arrêt sur résultat backend (A,B,C,D)
 
 // --------------------------------------------------
 // PIXI global settings (IMPORTANT)
@@ -23,6 +24,7 @@ let app;
 let symbolTextures = [];
 let reels = [];
 
+// --- (A) paramètres animation spin
 const SPIN_VISUAL_MS = 750;     // durée animation
 const SHUFFLE_EVERY_MS = 55;    // vitesse shuffle
 
@@ -61,7 +63,7 @@ const GLOW_COLORS = {
   premium77: 0xd45bff // violet
 };
 
-// Intensités (tu peux ajuster)
+// Intensités (tes valeurs actuelles)
 const GLOW_PARAMS = {
   wild:     { distance: 6, outer: 0.70, inner: 0.20, quality: 0.25 },
   bonus:    { distance: 6, outer: 0.65, inner: 0.20, quality: 0.25 },
@@ -168,7 +170,6 @@ function buildGlowFilters() {
 
   const r = app.renderer.resolution || 1;
 
-  // Signature pixi-filters v4: new GlowFilter(distance, outerStrength, innerStrength, color, quality)
   const fWild = new PIXI.filters.GlowFilter(
     GLOW_PARAMS.wild.distance,
     GLOW_PARAMS.wild.outer,
@@ -196,7 +197,7 @@ function buildGlowFilters() {
   fBonus.resolution = r;
   fPremium.resolution = r;
 
-  // Bonus: évite que le glow soit “coupé” (selon versions)
+  // évite que le glow soit coupé
   fWild.padding = GLOW_PARAMS.wild.distance * 2;
   fBonus.padding = GLOW_PARAMS.bonus.distance * 2;
   fPremium.padding = GLOW_PARAMS.premium.distance * 2;
@@ -242,15 +243,12 @@ async function initPixi() {
     const cellW = Math.round(fullW / COLS_SHEET);
     const cellH = Math.round(fullH / ROWS_SHEET);
 
-    // ordre sur ta feuille (3 lignes remplies)
     const positions = [
       [0, 0], [1, 0], [2, 0], [3, 0],
       [0, 1], [1, 1], [2, 1], [3, 1],
       [0, 2], [1, 2], [2, 2], [3, 2],
     ];
 
-    // PAD: 0 si ton spritesheet a du vide autour
-    // Mets 1 si tu vois du bleeding
     const PAD = 0;
 
     symbolTextures = positions.map(([c, r]) => {
@@ -268,7 +266,6 @@ async function initPixi() {
       return;
     }
 
-    // glow filters (si dispo)
     glowFilters = buildGlowFilters();
 
     buildSlotScene();
@@ -278,7 +275,6 @@ async function initPixi() {
 
     app.ticker.add(updateHighlight);
 
-    // resize/orientation: rebuild propre
     window.addEventListener("resize", () => {
       app.stage.removeChildren();
       reels = [];
@@ -303,16 +299,14 @@ function createSymbolCell(texture, symbolSize) {
   const cell = new PIXI.Container();
   cell.roundPixels = true;
 
-  // Glow sprite (derrière)
   const glowSprite = new PIXI.Sprite(texture);
   glowSprite.anchor.set(0.5);
   glowSprite.width = symbolSize;
   glowSprite.height = symbolSize;
   glowSprite.visible = false;
   glowSprite.roundPixels = true;
-  glowSprite.alpha = 0.55; // ✅ rend l'effet moins blanc / moins violent
+  glowSprite.alpha = 0.55;
 
-  // Sprite net (devant)
   const mainSprite = new PIXI.Sprite(texture);
   mainSprite.anchor.set(0.5);
   mainSprite.width = symbolSize;
@@ -327,33 +321,88 @@ function createSymbolCell(texture, symbolSize) {
 function applySymbolVisual(cellObj, symbolId) {
   cellObj.symbolId = symbolId;
 
-  // Par défaut: pas de glow => qualité maximale
   cellObj.glow.visible = false;
   cellObj.glow.filters = null;
+  cellObj.glow.tint = 0xffffff;
 
   if (!glowFilters) return;
 
   if (symbolId === WILD_ID) {
-  cellObj.glow.alpha = 0.45;
-  cellObj.glow.visible = true;
-  cellObj.glow.filters = [glowFilters.wild];
-} else if (symbolId === BONUS_ID) {
-  cellObj.glow.alpha = 0.45;
-  cellObj.glow.visible = true;
-  cellObj.glow.filters = [glowFilters.bonus];
-} else if (symbolId === PREMIUM77_ID) {
-  cellObj.glow.alpha = 0.35;                 // ✅ moins fort
-  cellObj.glow.tint  = GLOW_COLORS.premium77; // ✅ évite le halo blanc
-  cellObj.glow.visible = true;
-  cellObj.glow.filters = [glowFilters.premium];
+    cellObj.glow.alpha = 0.45;
+    cellObj.glow.visible = true;
+    cellObj.glow.filters = [glowFilters.wild];
+  } else if (symbolId === BONUS_ID) {
+    cellObj.glow.alpha = 0.45;
+    cellObj.glow.visible = true;
+    cellObj.glow.filters = [glowFilters.bonus];
+  } else if (symbolId === PREMIUM77_ID) {
+    cellObj.glow.alpha = 0.35;
+    cellObj.glow.tint  = GLOW_COLORS.premium77;
+    cellObj.glow.visible = true;
+    cellObj.glow.filters = [glowFilters.premium];
+  }
 }
+
+// --------------------------------------------------
+// (B) helpers spin anim
+// --------------------------------------------------
+function randomSymbolId() {
+  return Math.floor(Math.random() * symbolTextures.length);
+}
+
+function setCellSymbol(cellObj, symbolId) {
+  const safeId =
+    ((symbolId % symbolTextures.length) + symbolTextures.length) % symbolTextures.length;
+  const tex = symbolTextures[safeId];
+
+  cellObj.main.texture = tex;
+  cellObj.glow.texture = tex;
+  applySymbolVisual(cellObj, safeId);
+}
+
+// --------------------------------------------------
+// (C) animation visuelle du spin
+// --------------------------------------------------
+function animateSpinVisual(finalGrid) {
+  return new Promise((resolve) => {
+    const start = performance.now();
+    let lastShuffle = 0;
+
+    function tick(now) {
+      const elapsed = now - start;
+
+      if (now - lastShuffle > SHUFFLE_EVERY_MS) {
+        lastShuffle = now;
+
+        for (let c = 0; c < COLS; c++) {
+          for (let r = 0; r < ROWS; r++) {
+            const cellObj = reels[c]?.symbols[r];
+            if (!cellObj) continue;
+
+            // pendant l'anim: shuffle rapide
+            setCellSymbol(cellObj, randomSymbolId());
+          }
+        }
+      }
+
+      if (elapsed >= SPIN_VISUAL_MS) {
+        // fin: applique le vrai résultat
+        applyResultToReels(finalGrid);
+        resolve();
+        return;
+      }
+
+      requestAnimationFrame(tick);
+    }
+
+    requestAnimationFrame(tick);
+  });
 }
 
 // --------------------------------------------------
 // Construction scène slot
 // --------------------------------------------------
 function buildSlotScene() {
-  // ✅ utiliser app.screen (CSS pixels)
   const w = app.screen.width;
   const h = app.screen.height;
 
@@ -364,7 +413,6 @@ function buildSlotScene() {
   const symbolFromHeight = h * 0.16;
   const symbolFromWidth = (maxTotalWidth - gap * (COLS - 1)) / COLS;
 
-  // ✅ CAP: ne jamais dépasser la taille source (256px)
   const MAX_SYMBOL_PX = 256;
   const symbolSize = Math.min(
     MAX_SYMBOL_PX,
@@ -405,7 +453,7 @@ function buildSlotScene() {
     const reel = { container: reelContainer, symbols: [] };
 
     for (let r = 0; r < ROWS; r++) {
-      const idx = Math.floor(Math.random() * symbolTextures.length); // déjà safe
+      const idx = Math.floor(Math.random() * symbolTextures.length);
       const cellObj = createSymbolCell(symbolTextures[idx], symbolSize);
 
       cellObj.container.x = Math.round(symbolSize / 2);
@@ -573,7 +621,6 @@ function createPaytableOverlay() {
   title.y = panelY + marginY;
   container.addChild(title);
 
-  // Bouton fermer
   const closeHeight = Math.round(h * 0.06);
   const closeWidth = panelWidth * 0.35;
 
@@ -604,7 +651,6 @@ function createPaytableOverlay() {
   close.on("pointerup", () => { cg.alpha = 1.0; togglePaytable(false); });
   close.on("pointerupoutside", () => (cg.alpha = 1.0));
 
-  // Texte
   const bodyText =
     "Fruits (pastèque, pomme, cerises, citron) :\n" +
     "  3 symboles : 2× la mise\n" +
@@ -637,7 +683,6 @@ function createPaytableOverlay() {
   body.x = w / 2;
   body.y = title.y + title.height + marginY;
 
-  // Auto-fit: réduire jusqu'à ce que ça rentre au-dessus du bouton
   const maxBottom = close.y - closeHeight / 2 - marginY;
   let safety = 0;
   while (body.y + body.height > maxBottom && fontSize > 12 && safety < 25) {
@@ -673,7 +718,6 @@ function applyResultToReels(grid) {
       const reel = reels[c];
       if (!reel || !reel.symbols[r]) continue;
 
-      // ✅ FIX: même ID "safe" pour texture + glow
       const safeId =
         ((value % symbolTextures.length) + symbolTextures.length) % symbolTextures.length;
 
@@ -683,16 +727,13 @@ function applyResultToReels(grid) {
       cellObj.main.texture = tex;
       cellObj.glow.texture = tex;
 
-      // glow uniquement sur 77/WILD/BONUS
       applySymbolVisual(cellObj, safeId);
 
-      // reset alpha (au cas où highlight)
       cellObj.container.alpha = 1;
     }
   }
 }
 
-// (gardé si tu veux l'utiliser ailleurs)
 function getTextureByIndex(index) {
   if (!symbolTextures.length) return PIXI.Texture.WHITE;
   const safeIndex =
@@ -826,26 +867,25 @@ async function onSpinClick() {
     const data = await response.json();
     const grid = data.result || data.grid || data;
 
-    applyResultToReels(grid);
+    // (D) ✅ animation visuelle + arrêt sur résultat
+    await animateSpinVisual(grid);
 
-    setTimeout(() => {
-      const { baseWin, winningLines, bonusTriggered } = evaluateGrid(grid, effectiveBet);
+    const { baseWin, winningLines, bonusTriggered } = evaluateGrid(grid, effectiveBet);
 
-      let totalWin = baseWin;
+    let totalWin = baseWin;
 
-      if (bonusTriggered) {
-        freeSpins += 10;
-        winMultiplier = 2;
-      }
+    if (bonusTriggered) {
+      freeSpins += 10;
+      winMultiplier = 2;
+    }
 
-      if (winMultiplier > 1) totalWin *= winMultiplier;
+    if (winMultiplier > 1) totalWin *= winMultiplier;
 
-      lastWin = totalWin;
-      balance += totalWin;
-      updateHUDNumbers();
+    lastWin = totalWin;
+    balance += totalWin;
+    updateHUDNumbers();
 
-      finishSpin(totalWin, winningLines, bonusTriggered);
-    }, 400);
+    finishSpin(totalWin, winningLines, bonusTriggered);
   } catch (err) {
     console.error("Erreur API /spin", err);
     updateHUDTexts("Erreur API");
