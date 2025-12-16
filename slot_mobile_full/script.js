@@ -120,9 +120,9 @@ const GLOW_COLORS = {
 };
 
 const GLOW_PARAMS = {
-  wild:    { distance: 6, outer: 0.70, inner: 0.20, quality: 0.25 },
+  wild:    { distance: 6, outer: 0.65, inner: 0.20, quality: 0.25 },
   bonus:   { distance: 6, outer: 0.65, inner: 0.20, quality: 0.25 },
-  premium: { distance: 7, outer: 0.85, inner: 0.20, quality: 0.28 },
+  premium: { distance: 6, outer: 0.65, inner: 0.20, quality: 0.28 },
 };
 
 let glowFilters = null;
