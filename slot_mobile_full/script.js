@@ -3,11 +3,12 @@
 // ✅ FIX iPhone: autoDensity + resolution (DPR) + layout basé sur app.screen.*
 // ✅ Anti-bleeding: clamp + mipmaps off + PAD
 // ✅ VISUEL: Glow propre (copie derrière) => symboles nets, glow seulement 77/WILD/BONUS
-// ✅ INFO: texte auto-fit => plus de texte caché par le bouton
+// ✅ INFO: texte auto-fit
 // ✅ CAP: ne jamais upscaler au-dessus de 256px (taille source)
 // ✅ SPIN ANIM: reel par reel + départ doux + arrêt + bounce
-// ✅ MASK FIX: mask sur app.stage (pas enfant du slotContainer) => plus d’écran vide
-// ✅ BACKGROUND: vrai fond (dégradé + vignette + étoiles) responsive
+// ✅ MASK FIX: mask sur app.stage (pas enfant du slotContainer)
+// ✅ BG FIX: background plein écran (texture canvas) + étoiles (pas de panneau mal ajusté)
+// ✅ BOUNCE FIX: bounce déclenché UNE seule fois, exactement après settle (plus “trop tôt”)
 
 // --------------------------------------------------
 // PIXI global settings (IMPORTANT)
@@ -60,15 +61,139 @@ let slotMask = null;
 // layout reel
 let symbolSize = 0;
 let reelGap = 8;
-let reelStep = 0; // symbolSize + gap
+let reelStep = 0;          // symbolSize + gap
 let visibleH = 0;
 
-// --------------------------------------------------
-// BACKGROUND refs
-// --------------------------------------------------
+// background refs
 let bgSprite = null;
-let bgVignette = null;
 let bgStars = null;
+
+// --------------------------------------------------
+// BACKGROUND THEMES (1 mot pour changer)
+// --------------------------------------------------
+const BG_THEME = "LUXE"; // "LUXE" | "NEON" | "TROPICAL"
+
+const BG_THEMES = {
+  LUXE: {
+    grad: ["#050814", "#070b1c", "#02040d"],
+    glows: [
+      { x: 0.50, y: 0.18, r: 0.70, color: "rgba(242,182,50,0.12)" },
+      { x: 0.20, y: 0.75, r: 0.60, color: "rgba(58,166,255,0.08)" },
+    ],
+    vignette: 0.22,
+    starAlpha: [0.05, 0.16],
+  },
+  NEON: {
+    grad: ["#07001a", "#14003a", "#02000f"],
+    glows: [
+      { x: 0.55, y: 0.22, r: 0.75, color: "rgba(212,91,255,0.14)" },
+      { x: 0.25, y: 0.70, r: 0.70, color: "rgba(58,166,255,0.12)" },
+    ],
+    vignette: 0.20,
+    starAlpha: [0.06, 0.20],
+  },
+  TROPICAL: {
+    grad: ["#00151a", "#003a2a", "#001008"],
+    glows: [
+      { x: 0.55, y: 0.20, r: 0.80, color: "rgba(43,255,90,0.12)" },
+      { x: 0.30, y: 0.80, r: 0.70, color: "rgba(242,182,50,0.08)" },
+    ],
+    vignette: 0.20,
+    starAlpha: [0.05, 0.14],
+  },
+};
+
+function destroyBgSpriteSafe(s) {
+  if (!s) return;
+  try {
+    s.destroy({ children: true, texture: true, baseTexture: true });
+  } catch (e) {
+    try { s.destroy(true); } catch (_) {}
+  }
+}
+
+function makeBackgroundTexture(w, h, themeName) {
+  const theme = BG_THEMES[themeName] || BG_THEMES.LUXE;
+
+  const c = document.createElement("canvas");
+  c.width = Math.max(2, Math.floor(w));
+  c.height = Math.max(2, Math.floor(h));
+  const ctx = c.getContext("2d");
+
+  // gradient vertical
+  const g = ctx.createLinearGradient(0, 0, 0, c.height);
+  g.addColorStop(0, theme.grad[0]);
+  g.addColorStop(0.55, theme.grad[1]);
+  g.addColorStop(1, theme.grad[2]);
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, c.width, c.height);
+
+  // glows radiaux
+  const R = Math.max(c.width, c.height);
+  for (const glow of theme.glows || []) {
+    const rr = R * (glow.r || 0.7);
+    const rg = ctx.createRadialGradient(
+      c.width * (glow.x ?? 0.5),
+      c.height * (glow.y ?? 0.2),
+      0,
+      c.width * (glow.x ?? 0.5),
+      c.height * (glow.y ?? 0.2),
+      rr
+    );
+    rg.addColorStop(0, glow.color || "rgba(255,255,255,0.08)");
+    rg.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.fillStyle = rg;
+    ctx.fillRect(0, 0, c.width, c.height);
+  }
+
+  // vignette (baked) : bords plus sombres
+  const v = ctx.createRadialGradient(
+    c.width / 2, c.height / 2, Math.min(c.width, c.height) * 0.15,
+    c.width / 2, c.height / 2, Math.max(c.width, c.height) * 0.65
+  );
+  const va = theme.vignette ?? 0.20;
+  v.addColorStop(0, `rgba(0,0,0,0)`);
+  v.addColorStop(1, `rgba(0,0,0,${va})`);
+  ctx.fillStyle = v;
+  ctx.fillRect(0, 0, c.width, c.height);
+
+  return PIXI.Texture.from(c);
+}
+
+function buildBackground() {
+  const w = app.screen.width;
+  const h = app.screen.height;
+  const theme = BG_THEMES[BG_THEME] || BG_THEMES.LUXE;
+
+  // cleanup
+  if (bgSprite) { destroyBgSpriteSafe(bgSprite); bgSprite = null; }
+  if (bgStars) { try { bgStars.destroy(true); } catch(e) {} bgStars = null; }
+
+  // BG plein écran
+  bgSprite = new PIXI.Sprite(makeBackgroundTexture(w, h, BG_THEME));
+  bgSprite.x = 0;
+  bgSprite.y = 0;
+  bgSprite.width = w;
+  bgSprite.height = h;
+  app.stage.addChild(bgSprite);
+
+  // Etoiles / poussières
+  bgStars = new PIXI.Graphics();
+  const count = Math.floor((w * h) / 26000);
+  const aMin = theme.starAlpha?.[0] ?? 0.05;
+  const aMax = theme.starAlpha?.[1] ?? 0.16;
+
+  for (let i = 0; i < count; i++) {
+    const x = Math.random() * w;
+    const y = Math.random() * h;
+    const rr = Math.random() * 1.4 + 0.4;
+    const a = Math.random() * (aMax - aMin) + aMin;
+    bgStars.beginFill(0xffffff, a);
+    bgStars.drawCircle(x, y, rr);
+    bgStars.endFill();
+  }
+  app.stage.addChild(bgStars);
+}
 
 // --------------------------------------------------
 // VITESSES (3 modes)
@@ -84,7 +209,7 @@ const SPEEDS = [
     preDecelMs: 260,
     settleMs: 320,
     bounceMs: 260,
-    bounceAmpFactor: 0.22, // * reelStep
+    bounceAmpFactor: 0.22,
   },
   {
     name: "NORMAL",
@@ -112,10 +237,10 @@ const SPEEDS = [
   },
 ];
 
-let speedIndex = 0; // 0=LENT,1=NORMAL,2=RAPIDE
+let speedIndex = 0;
 
 // --------------------------------------------------
-// VISUEL (Glow) – tes valeurs actuelles
+// VISUEL (Glow)
 // --------------------------------------------------
 const GLOW_COLORS = {
   wild: 0x2bff5a,
@@ -124,8 +249,8 @@ const GLOW_COLORS = {
 };
 
 const GLOW_PARAMS = {
-  wild: { distance: 6, outer: 0.70, inner: 0.20, quality: 0.25 },
-  bonus: { distance: 6, outer: 0.65, inner: 0.20, quality: 0.25 },
+  wild:    { distance: 6, outer: 0.70, inner: 0.20, quality: 0.25 },
+  bonus:   { distance: 6, outer: 0.65, inner: 0.20, quality: 0.25 },
   premium: { distance: 7, outer: 0.85, inner: 0.20, quality: 0.28 },
 };
 
@@ -159,24 +284,24 @@ function playSound(name) {
 // Paylines & paytable
 // --------------------------------------------------
 const PAYLINES = [
-  [[0, 0], [1, 0], [2, 0], [3, 0], [4, 0]],
-  [[0, 1], [1, 1], [2, 1], [3, 1], [4, 1]],
-  [[0, 2], [1, 2], [2, 2], [3, 2], [4, 2]],
-  [[0, 0], [1, 1], [2, 2], [3, 1], [4, 0]],
-  [[0, 2], [1, 1], [2, 0], [3, 1], [4, 2]],
+  [[0, 0],[1, 0],[2, 0],[3, 0],[4, 0]],
+  [[0, 1],[1, 1],[2, 1],[3, 1],[4, 1]],
+  [[0, 2],[1, 2],[2, 2],[3, 2],[4, 2]],
+  [[0, 0],[1, 1],[2, 2],[3, 1],[4, 0]],
+  [[0, 2],[1, 1],[2, 0],[3, 1],[4, 2]],
 ];
 
 const PAYTABLE = {
-  1: { 3: 2, 4: 3, 5: 4 },
-  3: { 3: 2, 4: 3, 5: 4 },
-  7: { 3: 2, 4: 3, 5: 4 },
+  1:  { 3: 2, 4: 3, 5: 4 },
+  3:  { 3: 2, 4: 3, 5: 4 },
+  7:  { 3: 2, 4: 3, 5: 4 },
   10: { 3: 2, 4: 3, 5: 4 },
-  4: { 3: 3, 4: 4, 5: 5 },
-  8: { 3: 4, 4: 5, 5: 6 },
-  5: { 3: 10, 4: 12, 5: 14 },
-  2: { 3: 16, 4: 18, 5: 20 },
+  4:  { 3: 3, 4: 4, 5: 5 },
+  8:  { 3: 4, 4: 5, 5: 6 },
+  5:  { 3: 10, 4: 12, 5: 14 },
+  2:  { 3: 16, 4: 18, 5: 20 },
   11: { 3: 20, 4: 25, 5: 30 },
-  0: { 3: 30, 4: 40, 5: 50 },
+  0:  { 3: 30, 4: 40, 5: 50 },
 };
 
 // --------------------------------------------------
@@ -219,7 +344,7 @@ function loadSpritesheet() {
 }
 
 // --------------------------------------------------
-// GlowFilters (partagés) – resolution = renderer.resolution
+// GlowFilters
 // --------------------------------------------------
 function buildGlowFilters() {
   const hasGlow = !!(PIXI.filters && PIXI.filters.GlowFilter);
@@ -258,98 +383,6 @@ function buildGlowFilters() {
   fPremium.padding = GLOW_PARAMS.premium.distance * 2;
 
   return { wild: fWild, bonus: fBonus, premium: fPremium };
-}
-
-// --------------------------------------------------
-// BACKGROUND (dégradé + vignette + étoiles)
-// --------------------------------------------------
-function makeGradientTexture(w, h) {
-  const c = document.createElement("canvas");
-  c.width = Math.max(2, Math.floor(w));
-  c.height = Math.max(2, Math.floor(h));
-  const ctx = c.getContext("2d");
-
-  // Dégradé vertical dark casino
-  const g = ctx.createLinearGradient(0, 0, 0, c.height);
-  g.addColorStop(0, "#050814");
-  g.addColorStop(0.55, "#070b1c");
-  g.addColorStop(1, "#02040d");
-  ctx.fillStyle = g;
-  ctx.fillRect(0, 0, c.width, c.height);
-
-  // Glow doux en haut
-  const r = Math.max(c.width, c.height) * 0.65;
-  const rg = ctx.createRadialGradient(
-    c.width * 0.5,
-    c.height * 0.18,
-    0,
-    c.width * 0.5,
-    c.height * 0.18,
-    r
-  );
-  rg.addColorStop(0, "rgba(58,166,255,0.10)");
-  rg.addColorStop(1, "rgba(0,0,0,0)");
-  ctx.fillStyle = rg;
-  ctx.fillRect(0, 0, c.width, c.height);
-
-  return PIXI.Texture.from(c);
-}
-
-function destroyBgSpriteSafe(s) {
-  if (!s) return;
-  try {
-    s.destroy({ children: true, texture: true, baseTexture: true });
-  } catch (e) {
-    try { s.destroy(true); } catch (_) {}
-  }
-}
-
-function buildBackground() {
-  const w = app.screen.width;
-  const h = app.screen.height;
-
-  // cleanup (si rebuild)
-  if (bgSprite) { destroyBgSpriteSafe(bgSprite); bgSprite = null; }
-  if (bgVignette) { try { bgVignette.destroy(true); } catch(e) {} bgVignette = null; }
-  if (bgStars) { try { bgStars.destroy(true); } catch(e) {} bgStars = null; }
-
-  // Gradient sprite
-  bgSprite = new PIXI.Sprite(makeGradientTexture(w, h));
-  bgSprite.x = 0;
-  bgSprite.y = 0;
-  bgSprite.width = w;
-  bgSprite.height = h;
-  app.stage.addChildAt(bgSprite, 0);
-
-  // Vignette simple (léger assombrissement)
-  bgVignette = new PIXI.Graphics();
-  bgVignette.beginFill(0x000000, 0.18);
-  bgVignette.drawRect(0, 0, w, h);
-  bgVignette.endFill();
-
-  // un voile plus clair au centre (donne de la profondeur)
-  const pad = Math.round(Math.min(w, h) * 0.08);
-  const center = new PIXI.Graphics();
-  center.beginFill(0xffffff, 0.05);
-  center.drawRoundedRect(pad, pad, w - pad * 2, h - pad * 2, 40);
-  center.endFill();
-
-  bgVignette.addChild(center);
-  app.stage.addChildAt(bgVignette, 1);
-
-  // Petites étoiles/poussières
-  bgStars = new PIXI.Graphics();
-  const count = Math.floor((w * h) / 22000); // densité légère
-  for (let i = 0; i < count; i++) {
-    const x = Math.random() * w;
-    const y = Math.random() * h;
-    const rr = Math.random() * 1.6 + 0.4;
-    const a = Math.random() * 0.18 + 0.06;
-    bgStars.beginFill(0xffffff, a);
-    bgStars.drawCircle(x, y, rr);
-    bgStars.endFill();
-  }
-  app.stage.addChildAt(bgStars, 2);
 }
 
 // --------------------------------------------------
@@ -415,6 +448,9 @@ async function initPixi() {
 
     glowFilters = buildGlowFilters();
 
+    // ✅ IMPORTANT: background AVANT le reste (plein écran)
+    buildBackground();
+
     buildSlotScene();
     buildHUD();
 
@@ -424,7 +460,11 @@ async function initPixi() {
 
     window.addEventListener("resize", () => {
       // cleanup refs
-      if (slotMask) { try { slotMask.destroy(true); } catch(e) {} slotMask = null; }
+      if (slotMask) { slotMask.destroy(true); slotMask = null; }
+
+      // cleanup bg
+      if (bgSprite) { destroyBgSpriteSafe(bgSprite); bgSprite = null; }
+      if (bgStars) { try { bgStars.destroy(true); } catch(e) {} bgStars = null; }
 
       app.stage.removeChildren();
       reels = [];
@@ -432,6 +472,9 @@ async function initPixi() {
       paytableOverlay = null;
 
       glowFilters = buildGlowFilters();
+
+      // rebuild
+      buildBackground();
       buildSlotScene();
       buildHUD();
       updateHUDTexts("Appuyez sur SPIN pour lancer");
@@ -444,7 +487,7 @@ async function initPixi() {
 }
 
 // --------------------------------------------------
-// Crée une “cellule” symbole : glow derrière + symbole net devant
+// Cellule symbole : glow derrière + net devant
 // --------------------------------------------------
 function createSymbolCell(texture, sizePx) {
   const cell = new PIXI.Container();
@@ -511,14 +554,11 @@ function setCellSymbol(cellObj, symbolId) {
 }
 
 // --------------------------------------------------
-// Construction scène slot + MASK (FIX STABLE) + BACKGROUND
+// Construction scène slot + MASK (FIX STABLE)
 // --------------------------------------------------
 function buildSlotScene() {
   const w = app.screen.width;
   const h = app.screen.height;
-
-  // ✅ Fond d'abord (reste tout derrière)
-  buildBackground();
 
   const sideMargin = w * 0.08;
   const maxTotalWidth = w - sideMargin * 2;
@@ -535,18 +575,18 @@ function buildSlotScene() {
 
   const totalReelWidth = COLS * symbolSize + reelGap * (COLS - 1);
 
-  // Container slot (on l'ajoute après le frame)
   slotContainer = new PIXI.Container();
+
   slotContainer.x = Math.round((w - totalReelWidth) / 2);
   slotContainer.y = Math.round(h * 0.22);
 
-  // Frame
+  // Frame (AU-DESSUS du background)
   const framePaddingX = 18;
   const framePaddingY = 18;
 
   slotFrame = new PIXI.Graphics();
   slotFrame.lineStyle(6, 0xf2b632, 1);
-  slotFrame.beginFill(0x060b1a, 0.9);
+  slotFrame.beginFill(0x060b1a, 0.90);
   slotFrame.drawRoundedRect(
     slotContainer.x - framePaddingX,
     slotContainer.y - framePaddingY,
@@ -556,13 +596,13 @@ function buildSlotScene() {
   );
   slotFrame.endFill();
 
-  // Important: frame au-dessus du background
+  // ordre: bg -> étoiles -> frame -> slotContainer -> hud
   app.stage.addChild(slotFrame);
   app.stage.addChild(slotContainer);
 
-  // ✅ MASK FIX: mask AU NIVEAU DU STAGE (PAS enfant du slotContainer)
+  // MASK au niveau du stage
   if (slotMask) {
-    try { slotMask.destroy(true); } catch(e) {}
+    slotMask.destroy(true);
     slotMask = null;
   }
   slotMask = new PIXI.Graphics();
@@ -585,15 +625,13 @@ function buildSlotScene() {
     reelContainer.x = Math.round(c * (symbolSize + reelGap));
     reelContainer.y = 0;
 
-    // on garde 4 symboles: 1 extra en haut + 3 visibles
+    // 4 symboles: 1 extra top + 3 visibles
     const cells = [];
     for (let i = 0; i < ROWS + 1; i++) {
       const idx = randomSymbolId();
       const cellObj = createSymbolCell(symbolTextures[idx], symbolSize);
       setCellSymbol(cellObj, idx);
 
-      // positions locales fixes, on anime reelContainer.y (offset)
-      // i=0 = extra top
       const y = Math.round(i * reelStep - reelStep + symbolSize / 2);
       cellObj.container.x = Math.round(symbolSize / 2);
       cellObj.container.y = y;
@@ -609,6 +647,10 @@ function buildSlotScene() {
       spinning: false,
       settled: false,
       finalApplied: false,
+
+      // ✅ bounce sync
+      bouncing: false,
+      bounceStart: 0,
     });
   }
 }
@@ -753,7 +795,7 @@ function buildHUD() {
   // 2e ligne: VITESSE sous SPIN + INFO sous +1
   const secondY = buttonsY + buttonHeight + h * 0.02;
 
-  const speedW = buttonWidth; // comme SPIN
+  const speedW = buttonWidth;
   const speedH = buttonHeight * 0.90;
 
   btnSpeed = makeSpeedButton(speedW, speedH);
@@ -766,7 +808,7 @@ function buildHUD() {
   btnInfo.x = btnPlus.x;
   btnInfo.y = secondY;
 
-  // ✅ évite que INFO soit coupé à droite
+  // évite que INFO soit coupé
   const safeRight = w - w * 0.03;
   if (btnInfo.x + infoW / 2 > safeRight) {
     btnInfo.x = safeRight - infoW / 2;
@@ -795,7 +837,7 @@ function updateHUDNumbers() {
 }
 
 // --------------------------------------------------
-// Paytable overlay (auto-fit texte)
+// Paytable overlay
 // --------------------------------------------------
 function createPaytableOverlay() {
   const w = app.screen.width;
@@ -936,7 +978,6 @@ function applyResultToReels(grid) {
       const reel = reels[c];
       if (!reel) continue;
 
-      // visible rows sont symbols[1..3] (top->bottom)
       const cellObj = reel.symbols[r + 1];
       if (!cellObj) continue;
 
@@ -1042,11 +1083,10 @@ function easeInOutQuad(t) {
 }
 
 // --------------------------------------------------
-// Spin anim reel-by-reel + settle + bounce (fluide)
+// Spin anim reel-by-reel + settle + bounce (FLUIDE + SYNC)
 // --------------------------------------------------
 function shiftReelOneStepDown(reel, nextTopId) {
-  // order symbols: [extraTop, row0, row1, row2]
-  const s = reel.symbols;
+  const s = reel.symbols; // [extraTop, row0, row1, row2]
   setCellSymbol(s[3], s[2].symbolId);
   setCellSymbol(s[2], s[1].symbolId);
   setCellSymbol(s[1], s[0].symbolId);
@@ -1060,7 +1100,6 @@ function setFinalColumnOnReel(reelIndex, finalGrid) {
   const topId = finalGrid[0][reelIndex];
   const midId = finalGrid[1][reelIndex];
   const botId = finalGrid[2][reelIndex];
-
   const extraId = randomSymbolId();
 
   setCellSymbol(reel.symbols[0], extraId);
@@ -1080,13 +1119,16 @@ function animateSpinReels(finalGrid) {
     reel.spinning = false;
     reel.settled = false;
     reel.finalApplied = false;
+
+    reel.bouncing = false;
+    reel.bounceStart = 0;
   });
 
   const startTime = performance.now();
 
   const plan = reels.map((_, c) => {
     const startAt = startTime + c * preset.startStaggerMs;
-    const stopAt = startAt + preset.spinMs + c * preset.stopStaggerMs;
+    const stopAt  = startAt + preset.spinMs + c * preset.stopStaggerMs;
 
     const settleStart = stopAt - preset.settleMs;
     const preDecelStart = settleStart - preset.preDecelMs;
@@ -1094,7 +1136,7 @@ function animateSpinReels(finalGrid) {
     return { startAt, stopAt, settleStart, preDecelStart };
   });
 
-  const bounceAmp = Math.min(reelStep * preset.bounceAmpFactor, 22);
+  const bounceAmp = Math.min(reelStep * preset.bounceAmpFactor, 24);
 
   return new Promise((resolve) => {
     let prev = performance.now();
@@ -1115,10 +1157,25 @@ function animateSpinReels(finalGrid) {
         }
 
         if (reel.settled) continue;
-
         allDone = false;
 
-        // --- SETTLE PHASE
+        // ---- BOUNCE PHASE (SYNC) ----
+        if (reel.bouncing) {
+          const tb = clamp01((now - reel.bounceStart) / preset.bounceMs);
+          const s = Math.sin(tb * Math.PI); // smooth
+          const amp = bounceAmp * (1 - tb * 0.15);
+          reel.container.y = -s * amp;
+
+          if (tb >= 1) {
+            reel.container.y = 0;
+            reel.offset = 0;
+            reel.bouncing = false;
+            reel.settled = true;
+          }
+          continue;
+        }
+
+        // ---- SETTLE PHASE ----
         if (now >= p.settleStart) {
           if (!reel.finalApplied) {
             setFinalColumnOnReel(c, finalGrid);
@@ -1132,34 +1189,19 @@ function animateSpinReels(finalGrid) {
           reel.container.y = reel.offset;
 
           if (tSettle >= 1) {
-            const bStart = now;
-            const startY = 0;
-
-            function bounceTick(tNow) {
-              const tb = clamp01((tNow - bStart) / preset.bounceMs);
-              const s = Math.sin(tb * Math.PI);
-              const amp = bounceAmp * (1 - tb * 0.15);
-              reel.container.y = startY - s * amp;
-
-              if (tb >= 1) {
-                reel.container.y = 0;
-                reel.offset = 0;
-                reel.settled = true;
-                return;
-              }
-              requestAnimationFrame(bounceTick);
-            }
-            requestAnimationFrame(bounceTick);
+            // ✅ FIX: on verrouille y=0 puis on déclenche bounce UNE seule fois
+            reel.container.y = 0;
+            reel.offset = 0;
+            reel.bouncing = true;
+            reel.bounceStart = now;
           }
-
           continue;
         }
 
-        // --- SPIN PHASE (scroll vers le bas)
+        // ---- SPIN PHASE (scroll vers le bas) ----
         reel.spinning = true;
 
         let speed = preset.basePxPerMs;
-
         const tAccel = clamp01((now - p.startAt) / preset.accelMs);
         speed *= easeInOutQuad(tAccel);
 
@@ -1234,8 +1276,6 @@ async function onSpinClick() {
     const grid = data.result || data.grid || data;
 
     await animateSpinReels(grid);
-
-    // sécurité
     applyResultToReels(grid);
 
     const { baseWin, winningLines, bonusTriggered } = evaluateGrid(grid, effectiveBet);
