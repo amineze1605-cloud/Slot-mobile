@@ -7,7 +7,7 @@
 // ✅ CAP: ne jamais upscaler au-dessus de 256px (taille source)
 // ✅ SPIN ANIM: reel par reel + départ doux + arrêt + bounce
 // ✅ MASK FIX: mask sur app.stage (pas enfant du slotContainer) => plus d’écran vide
-// ✅ BOUNCE SYNC: bounce géré dans la boucle principale (plus de décalage)
+// ✅ PATCH: bounce "primé" (pas de décalage à l’arrêt)
 
 // --------------------------------------------------
 // PIXI global settings (IMPORTANT)
@@ -467,7 +467,6 @@ function buildSlotScene() {
   slotMask.x = slotContainer.x;
   slotMask.y = slotContainer.y;
 
-  // IMPORTANT: ne pas mettre visible=false (peut casser le mask), on le rend juste non rendu
   slotMask.renderable = false;
 
   app.stage.addChild(slotMask);
@@ -489,7 +488,6 @@ function buildSlotScene() {
       const cellObj = createSymbolCell(symbolTextures[idx], symbolSize);
       setCellSymbol(cellObj, idx);
 
-      // positions locales fixes, on anime reelContainer.y (offset)
       // i=0 = extra top
       const y = Math.round(i * reelStep - reelStep + symbolSize / 2);
       cellObj.container.x = Math.round(symbolSize / 2);
@@ -507,7 +505,7 @@ function buildSlotScene() {
       settled: false,
       finalApplied: false,
 
-      // ✅ NEW (bounce sync)
+      // ✅ bounce state (évite décalage/relance)
       bouncing: false,
       bounceStart: 0,
     });
@@ -826,7 +824,7 @@ function togglePaytable(forceVisible) {
 }
 
 // --------------------------------------------------
-// Application grille backend
+// Application grille backend (sécurité)
 // --------------------------------------------------
 function applyResultToReels(grid) {
   if (!Array.isArray(grid) || grid.length !== ROWS) return;
@@ -837,7 +835,6 @@ function applyResultToReels(grid) {
       const reel = reels[c];
       if (!reel) continue;
 
-      // visible rows sont symbols[1..3] (top->bottom)
       const cellObj = reel.symbols[r + 1];
       if (!cellObj) continue;
 
@@ -972,7 +969,6 @@ function setFinalColumnOnReel(reelIndex, finalGrid) {
   reel.finalApplied = true;
 }
 
-// ✅ VERSION CORRIGÉE: bounce sync DANS tick()
 function animateSpinReels(finalGrid) {
   const preset = SPEEDS[speedIndex];
 
@@ -983,6 +979,7 @@ function animateSpinReels(finalGrid) {
     reel.settled = false;
     reel.finalApplied = false;
 
+    // bounce state
     reel.bouncing = false;
     reel.bounceStart = 0;
   });
@@ -999,7 +996,7 @@ function animateSpinReels(finalGrid) {
     return { startAt, stopAt, settleStart, preDecelStart };
   });
 
-  const bounceAmp = Math.min(reelStep * preset.bounceAmpFactor, 24);
+  const bounceAmp = Math.min(reelStep * preset.bounceAmpFactor, 22);
 
   return new Promise((resolve) => {
     let prev = performance.now();
@@ -1014,22 +1011,17 @@ function animateSpinReels(finalGrid) {
         const reel = reels[c];
         const p = plan[c];
 
-        if (reel.settled) continue;
-
-        // reel pas encore démarré
         if (now < p.startAt) {
           allDone = false;
           continue;
         }
 
+        if (reel.settled) continue;
         allDone = false;
 
-        // ----------------------------
-        // BOUNCE PHASE (sync)
-        // ----------------------------
+        // ✅ BOUNCE en cours (géré dans le tick, stable)
         if (reel.bouncing) {
           const tb = clamp01((now - reel.bounceStart) / preset.bounceMs);
-
           const s = Math.sin(tb * Math.PI);
           const amp = bounceAmp * (1 - tb * 0.18);
 
@@ -1044,9 +1036,7 @@ function animateSpinReels(finalGrid) {
           continue;
         }
 
-        // ----------------------------
-        // SETTLE PHASE (final -> offset 0 -> bounce)
-        // ----------------------------
+        // --- SETTLE PHASE (final symbols, offset -> 0, puis bounce)
         if (now >= p.settleStart) {
           if (!reel.finalApplied) {
             setFinalColumnOnReel(c, finalGrid);
@@ -1061,16 +1051,24 @@ function animateSpinReels(finalGrid) {
 
           if (tSettle >= 1) {
             reel.offset = 0;
-            reel.container.y = 0;
+
+            // ✅ PATCH: bounce "primé" (pas de décalage perceptible)
             reel.bouncing = true;
-            reel.bounceStart = now;
+
+            const prime = Math.min(dt, 20); // évite gros saut si frame drop
+            reel.bounceStart = now - prime;
+
+            // applique tout de suite la 1ère position du bounce (même frame)
+            const tb0 = clamp01(prime / preset.bounceMs);
+            const s0 = Math.sin(tb0 * Math.PI);
+            const amp0 = bounceAmp * (1 - tb0 * 0.18);
+            reel.container.y = -s0 * amp0;
           }
+
           continue;
         }
 
-        // ----------------------------
-        // SPIN PHASE (scroll down)
-        // ----------------------------
+        // --- SPIN PHASE (scroll vers le bas)
         reel.spinning = true;
 
         let speed = preset.basePxPerMs;
@@ -1098,6 +1096,7 @@ function animateSpinReels(finalGrid) {
         resolve();
         return;
       }
+
       requestAnimationFrame(tick);
     }
 
@@ -1149,7 +1148,6 @@ async function onSpinClick() {
 
     await animateSpinReels(grid);
 
-    // (sécurité) applique résultat final
     applyResultToReels(grid);
 
     const { baseWin, winningLines, bonusTriggered } = evaluateGrid(grid, effectiveBet);
