@@ -339,7 +339,7 @@ function applySymbolVisual(cellObj, symbolId) {
   cellObj.glow.visible = true;
   cellObj.glow.filters = [glowFilters.bonus];
 } else if (symbolId === PREMIUM77_ID) {
-  cellObj.glow.alpha = 0.40;                 // ✅ moins fort
+  cellObj.glow.alpha = 0.35;                 // ✅ moins fort
   cellObj.glow.tint  = GLOW_COLORS.premium77; // ✅ évite le halo blanc
   cellObj.glow.visible = true;
   cellObj.glow.filters = [glowFilters.premium];
