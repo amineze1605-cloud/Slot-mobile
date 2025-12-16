@@ -60,9 +60,9 @@ const GLOW_COLORS = {
 
 // Intensités (tu peux ajuster)
 const GLOW_PARAMS = {
-  wild:     { distance: 10, outer: 1.25, inner: 0.15, quality: 0.35 },
-  bonus:    { distance: 10, outer: 1.15, inner: 0.12, quality: 0.35 },
-  premium:  { distance: 14, outer: 2.20, inner: 0.25, quality: 0.45 },
+  wild:     { distance: 6,  outer: 0.70, inner: 0.20, quality: 0.25 },
+  bonus:    { distance: 6,  outer: 0.65, inner: 0.20, quality: 0.25 },
+  premium:  { distance: 8,  outer: 1.05, inner: 0.25, quality: 0.30 },
 };
 
 let glowFilters = null;
