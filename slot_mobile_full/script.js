@@ -5,11 +5,9 @@
 // ✅ VISUEL: Glow propre (copie derrière) => symboles nets, glow seulement 77/WILD/BONUS
 // ✅ INFO: texte auto-fit => plus de texte caché par le bouton
 // ✅ CAP: ne jamais upscaler au-dessus de 256px (taille source)
-// ✅ SPIN ANIM: départ doux + arrêt reel par reel + bounce + 3 vitesses
+// ✅ SPIN: démarrage plus doux (gauche->droite) + arrêt rouleau par rouleau + bounce léger
+// ✅ UI: VITESSE sous SPIN (2 lignes), INFO sous +1 (centré)
 
-// --------------------------------------------------
-// PIXI global settings (IMPORTANT)
-// --------------------------------------------------
 PIXI.settings.ROUND_PIXELS = true;
 PIXI.settings.MIPMAP_TEXTURES = PIXI.MIPMAP_MODES.OFF;
 PIXI.settings.SCALE_MODE = PIXI.SCALE_MODES.LINEAR;
@@ -51,51 +49,46 @@ let highlightedCells = [];
 let highlightTimer = 0;
 
 // --------------------------------------------------
-// (1) VITESSES (3 profils)
+// VITESSES (3 profils) – animation plus douce
 // --------------------------------------------------
 const SPEEDS = [
   {
-    name: "LENT",
-    spinMs: 1300,
-    // shuffle cadence (ms) : départ -> rapide -> fin (lent)
-    startShuffleMs: 95,
-    minShuffleMs: 38,
-    endShuffleMs: 140,
-    // timing arrêt par rouleau
-    stopStartPct: 0.55,      // quand on commence à arrêter (en % du spin)
-    stopGapMs: 150,          // délai entre chaque rouleau
-    // bounce
-    bounceMs: 200,
+    key: "LENT",
+    // temps global par rouleau (col) = reelTime + col*stopStagger
+    reelTime: 1100,
+    startStagger: 140, // démarrage col par col
+    stopStagger: 170,  // arrêt col par col
+    intervalMax: 150,  // début très lent
+    intervalMin: 55,   // vitesse max
+    intervalEnd: 170,  // fin plus lente
+    bouncePx: 10,
+    bounceMs: 260,
+  },
+  {
+    key: "NORMAL",
+    reelTime: 900,
+    startStagger: 120,
+    stopStagger: 150,
+    intervalMax: 130,
+    intervalMin: 45,
+    intervalEnd: 150,
+    bouncePx: 9,
+    bounceMs: 240,
+  },
+  {
+    key: "RAPIDE",
+    reelTime: 720,
+    startStagger: 105,
+    stopStagger: 130,
+    intervalMax: 115,
+    intervalMin: 38,
+    intervalEnd: 130,
     bouncePx: 8,
-  },
-  {
-    name: "NORMAL",
-    spinMs: 950,
-    startShuffleMs: 80,
-    minShuffleMs: 30,
-    endShuffleMs: 120,
-    stopStartPct: 0.55,
-    stopGapMs: 120,
-    bounceMs: 170,
-    bouncePx: 7,
-  },
-  {
-    name: "RAPIDE",
-    spinMs: 720,
-    startShuffleMs: 70,
-    minShuffleMs: 24,
-    endShuffleMs: 105,
-    stopStartPct: 0.55,
-    stopGapMs: 95,
-    bounceMs: 150,
-    bouncePx: 6,
+    bounceMs: 220,
   },
 ];
 
 let speedIndex = 0;
-function getSpeedProfile() {
-  return SPEEDS[speedIndex] || SPEEDS[0];
-}
 
 // --------------------------------------------------
 // VISUEL (Glow)
@@ -106,7 +99,6 @@ const GLOW_COLORS = {
   premium77: 0xd45bff // violet
 };
 
-// Intensités (tes valeurs actuelles)
 const GLOW_PARAMS = {
   wild:     { distance: 6, outer: 0.70, inner: 0.20, quality: 0.25 },
   bonus:    { distance: 6, outer: 0.65, inner: 0.20, quality: 0.25 },
@@ -203,7 +195,7 @@ function loadSpritesheet() {
 }
 
 // --------------------------------------------------
-// GlowFilters (partagés) – resolution = renderer.resolution
+// GlowFilters
 // --------------------------------------------------
 function buildGlowFilters() {
   const hasGlow = !!(PIXI.filters && PIXI.filters.GlowFilter);
@@ -237,7 +229,6 @@ function buildGlowFilters() {
   fBonus.resolution = r;
   fPremium.resolution = r;
 
-  // évite que le glow soit coupé
   fWild.padding = GLOW_PARAMS.wild.distance * 2;
   fBonus.padding = GLOW_PARAMS.bonus.distance * 2;
   fPremium.padding = GLOW_PARAMS.premium.distance * 2;
@@ -384,7 +375,7 @@ function applySymbolVisual(cellObj, symbolId) {
 }
 
 // --------------------------------------------------
-// Helpers spin anim
+// Helpers spin (shuffle + set symbol)
 // --------------------------------------------------
 function randomSymbolId() {
   return Math.floor(Math.random() * symbolTextures.length);
@@ -394,140 +385,164 @@ function setCellSymbol(cellObj, symbolId) {
   const safeId =
     ((symbolId % symbolTextures.length) + symbolTextures.length) % symbolTextures.length;
   const tex = symbolTextures[safeId];
+
   cellObj.main.texture = tex;
   cellObj.glow.texture = tex;
   applySymbolVisual(cellObj, safeId);
 }
 
-function applyFinalReel(col, finalGrid) {
+function applyResultToReel(col, finalGrid) {
   for (let r = 0; r < ROWS; r++) {
-    const value = finalGrid?.[r]?.[col];
-    const cellObj = reels[col]?.symbols?.[r];
+    const cellObj = reels[col]?.symbols[r];
     if (!cellObj) continue;
-    setCellSymbol(cellObj, value);
+    const value = finalGrid[r][col];
+    const safeId =
+      ((value % symbolTextures.length) + symbolTextures.length) % symbolTextures.length;
+    setCellSymbol(cellObj, safeId);
     cellObj.container.alpha = 1;
   }
 }
 
-// Easing
+function applyResultToReels(grid) {
+  if (!Array.isArray(grid) || grid.length !== ROWS) return;
+  for (let c = 0; c < COLS; c++) applyResultToReel(c, grid);
+}
+
+// --------------------------------------------------
+// Easing (pour fluidité)
+// --------------------------------------------------
 function clamp01(x) { return Math.max(0, Math.min(1, x)); }
 function lerp(a, b, t) { return a + (b - a) * t; }
-function easeOutCubic(t) { return 1 - Math.pow(1 - t, 3); }
+
+// départ très doux -> accélère
 function easeInCubic(t) { return t * t * t; }
-
-// cadence shuffle variable => plus fluide (départ doux + ralentissement)
-function calcShuffleInterval(progress, sp) {
-  const p = clamp01(progress);
-
-  // ramp-up (0 -> 20%)
-  if (p < 0.20) {
-    const t = easeOutCubic(p / 0.20);
-    return lerp(sp.startShuffleMs, sp.minShuffleMs, t);
-  }
-
-  // ramp-down (75% -> 100%)
-  if (p > 0.75) {
-    const t = easeInCubic((p - 0.75) / 0.25);
-    return lerp(sp.minShuffleMs, sp.endShuffleMs, t);
-  }
-
-  return sp.minShuffleMs;
-}
-
-// bounce léger (0 -> px -> 0)
-function reelBounce(container, px, ms) {
-  const baseY = container._baseY ?? container.y;
-  container._baseY = baseY;
-
-  const start = performance.now();
-  return new Promise((resolve) => {
-    function tick(now) {
-      const t = (now - start) / ms;
-      if (t >= 1) {
-        container.y = Math.round(baseY);
-        resolve();
-        return;
-      }
-      const y = baseY + px * Math.sin(t * Math.PI);
-      container.y = Math.round(y);
-      requestAnimationFrame(tick);
-    }
-    requestAnimationFrame(tick);
-  });
+// décélération douce
+function easeOutCubic(t) { t = 1 - t; return 1 - t * t * t; }
+// petit bounce soft (sans exagérer)
+function easeOutBack(t) {
+  const c1 = 1.70158;
+  const c3 = c1 + 1;
+  return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
 }
 
 // --------------------------------------------------
-// Animation visuelle du spin (fluide + stop reel par reel)
+// Spin animé (gauche->droite) + arrêt rouleau par rouleau + bounce
 // --------------------------------------------------
-function animateSpinVisual(finalGrid) {
-  const sp = getSpeedProfile();
-
+function animateSpinReels(finalGrid) {
   return new Promise((resolve) => {
+    const sp = SPEEDS[speedIndex] || SPEEDS[0];
     const start = performance.now();
-    const stopped = Array(COLS).fill(false);
-    const stopPromises = Array(COLS).fill(null);
 
-    // timing des stops
-    const stopStartAt = start + sp.spinMs * sp.stopStartPct;
-    const stopAt = Array(COLS).fill(0).map((_, c) => stopStartAt + c * sp.stopGapMs);
+    // état par rouleau
+    const state = new Array(COLS).fill(0).map(() => ({
+      lastShuffle: 0,
+      stopped: false,
+      bounceStart: 0,
+      baseY: 0,
+      bouncing: false,
+    }));
 
-    // shuffle scheduling par reel
-    const nextShuffleAt = Array(COLS).fill(start);
-
-    function stopOneReel(c) {
-      if (stopped[c]) return stopPromises[c] || Promise.resolve();
-      stopped[c] = true;
-
-      // fixe le reel sur le résultat
-      applyFinalReel(c, finalGrid);
-
-      // bounce
-      const reelContainer = reels[c]?.container;
-      stopPromises[c] = reelContainer
-        ? reelBounce(reelContainer, sp.bouncePx, sp.bounceMs)
-        : Promise.resolve();
-
-      return stopPromises[c];
-    }
-
-    function allStopped() {
-      for (let c = 0; c < COLS; c++) if (!stopped[c]) return false;
-      return true;
+    // on garde les y de base pour le bounce
+    for (let c = 0; c < COLS; c++) {
+      state[c].baseY = reels[c]?.container?.y || 0;
     }
 
     function tick(now) {
-      const elapsed = now - start;
-      const progress = clamp01(elapsed / sp.spinMs);
+      let allDone = true;
 
-      // shuffle reels encore en rotation
       for (let c = 0; c < COLS; c++) {
-        if (stopped[c]) continue;
+        const st = state[c];
+        const reel = reels[c];
+        if (!reel) continue;
 
-        // stop si on a atteint son timing
-        if (now >= stopAt[c]) {
-          stopOneReel(c);
+        // démarrage décalé gauche->droite
+        const localStart = start + c * sp.startStagger;
+        const local = now - localStart;
+
+        if (local < 0) {
+          allDone = false;
           continue;
         }
 
-        const interval = calcShuffleInterval(progress, sp);
-        if (now >= nextShuffleAt[c]) {
-          nextShuffleAt[c] = now + interval;
+        const total = sp.reelTime + c * sp.stopStagger;
+        const p = clamp01(local / total);
 
-          // shuffle UNIQUEMENT ce reel (plus réaliste + moins brusque)
-          for (let r = 0; r < ROWS; r++) {
-            const cellObj = reels[c]?.symbols?.[r];
-            if (!cellObj) continue;
-            setCellSymbol(cellObj, randomSymbolId());
+        // si pas encore stoppé -> shuffle
+        if (!st.stopped) {
+          allDone = false;
+
+          // interval évolutif (départ lent -> rapide -> ralentit)
+          let targetInterval;
+          if (p < 0.28) {
+            // accélération
+            const t = easeInCubic(p / 0.28);
+            targetInterval = lerp(sp.intervalMax, sp.intervalMin, t);
+          } else if (p < 0.72) {
+            // vitesse stable
+            targetInterval = sp.intervalMin;
+          } else {
+            // décélération
+            const t = easeOutCubic((p - 0.72) / 0.28);
+            targetInterval = lerp(sp.intervalMin, sp.intervalEnd, t);
+          }
+
+          if (now - st.lastShuffle >= targetInterval) {
+            st.lastShuffle = now;
+
+            for (let r = 0; r < ROWS; r++) {
+              const cellObj = reel.symbols[r];
+              if (!cellObj) continue;
+              setCellSymbol(cellObj, randomSymbolId());
+            }
+          }
+
+          // stop du rouleau
+          if (p >= 1) {
+            st.stopped = true;
+
+            // applique le résultat de CE rouleau
+            applyResultToReel(c, finalGrid);
+
+            // petit "stop" audio par rouleau (léger)
+            playSound("stop");
+
+            // lance bounce
+            st.bouncing = true;
+            st.bounceStart = now;
+          }
+        }
+
+        // bounce après arrêt
+        if (st.bouncing) {
+          allDone = false;
+
+          const bt = (now - st.bounceStart) / sp.bounceMs;
+          const t = clamp01(bt);
+
+          // 0->1 : on descend un peu puis on revient avec back
+          // (descente rapide 0-0.25, retour 0.25-1)
+          let offset = 0;
+          if (t < 0.22) {
+            const tt = t / 0.22;
+            offset = lerp(0, sp.bouncePx, easeOutCubic(tt));
+          } else {
+            const tt = (t - 0.22) / 0.78;
+            offset = lerp(sp.bouncePx, 0, easeOutBack(tt));
+          }
+
+          reel.container.y = Math.round(st.baseY + offset);
+
+          if (t >= 1) {
+            reel.container.y = Math.round(st.baseY);
+            st.bouncing = false;
           }
         }
       }
 
-      // fin : quand tout est stoppé + bounce terminé
-      if (elapsed >= sp.spinMs && allStopped()) {
-        Promise.all(stopPromises.filter(Boolean)).then(() => resolve());
+      if (allDone) {
+        resolve();
         return;
       }
-
       requestAnimationFrame(tick);
     }
 
@@ -549,7 +564,6 @@ function buildSlotScene() {
   const symbolFromHeight = h * 0.16;
   const symbolFromWidth = (maxTotalWidth - gap * (COLS - 1)) / COLS;
 
-  // CAP: ne jamais dépasser la taille source (256px)
   const MAX_SYMBOL_PX = 256;
   const symbolSize = Math.min(
     MAX_SYMBOL_PX,
@@ -584,9 +598,9 @@ function buildSlotScene() {
 
   for (let c = 0; c < COLS; c++) {
     const reelContainer = new PIXI.Container();
-    reelContainer._baseY = reelContainer.y; // pour le bounce
     slotContainer.addChild(reelContainer);
     reelContainer.x = Math.round(c * (symbolSize + gap));
+    reelContainer.y = 0;
 
     const reel = { container: reelContainer, symbols: [] };
 
@@ -643,7 +657,7 @@ function makeButton(label, width, height) {
 
   const style = new PIXI.TextStyle({
     fontFamily: "system-ui",
-    fontSize: Math.min(height * 0.38, 24),
+    fontSize: Math.min(height * 0.45, 28),
     fill: 0xffffff,
   });
   const t = new PIXI.Text(label, style);
@@ -657,11 +671,66 @@ function makeButton(label, width, height) {
   container.on("pointerup", () => (g.alpha = 1.0));
   container.on("pointerupoutside", () => (g.alpha = 1.0));
 
-  container._label = t;
-  container.setLabel = (s) => { t.text = s; };
+  app.stage.addChild(container);
+  container._bg = g;
+  container._text = t;
+  return container;
+}
+
+// bouton VITESSE (2 lignes) : "VITESSE" + (LENT/NORMAL/RAPIDE)
+function makeSpeedButton(width, height) {
+  const container = new PIXI.Container();
+  const g = new PIXI.Graphics();
+  g.beginFill(0x111827);
+  g.lineStyle(4, 0xf2b632, 1);
+  g.drawRoundedRect(-width / 2, -height / 2, width, height, 18);
+  g.endFill();
+
+  const topStyle = new PIXI.TextStyle({
+    fontFamily: "system-ui",
+    fontSize: Math.min(height * 0.26, 18),
+    fill: 0xffffff,
+  });
+  const bottomStyle = new PIXI.TextStyle({
+    fontFamily: "system-ui",
+    fontSize: Math.min(height * 0.34, 22),
+    fill: 0xffffff,
+  });
+
+  const tTop = new PIXI.Text("VITESSE", topStyle);
+  tTop.anchor.set(0.5, 0.5);
+
+  const tBottom = new PIXI.Text(SPEEDS[speedIndex].key, bottomStyle);
+  tBottom.anchor.set(0.5, 0.5);
+
+  // placement vertical (2 lignes)
+  tTop.y = -height * 0.18;
+  tBottom.y = height * 0.18;
+
+  container.addChild(g, tTop, tBottom);
+  container.interactive = true;
+  container.buttonMode = true;
+
+  container.on("pointerdown", () => (g.alpha = 0.7));
+  container.on("pointerup", () => (g.alpha = 1.0));
+  container.on("pointerupoutside", () => (g.alpha = 1.0));
 
   app.stage.addChild(container);
+
+  container._bg = g;
+  container._tTop = tTop;
+  container._tBottom = tBottom;
   return container;
+}
+
+function refreshSpeedButton() {
+  if (!btnSpeed || !btnSpeed._tBottom) return;
+  btnSpeed._tBottom.text = SPEEDS[speedIndex].key;
+}
+
+function cycleSpeed() {
+  speedIndex = (speedIndex + 1) % SPEEDS.length;
+  refreshSpeedButton();
 }
 
 function buildHUD() {
@@ -695,33 +764,35 @@ function buildHUD() {
   btnPlus.x = btnSpin.x + (buttonWidth + spacingX);
   btnPlus.y = buttonsY;
 
-  // ✅ LIGNE 2 : sous SPIN -> VITESSE ; à droite -> INFO
-  const row2Y = buttonsY + buttonHeight + h * 0.02;
-  const speedW = w * 0.34;
-  const infoW  = w * 0.22;
-  const row2H  = buttonHeight * 0.78;
-  const row2Gap = w * 0.03;
+  // --- rangée du bas : VITESSE sous SPIN (large comme SPIN), INFO sous +1 (centré)
+  const bottomY = buttonsY + buttonHeight + h * 0.02;
 
-  btnSpeed = makeButton(`VITESSE : ${getSpeedProfile().name}`, speedW, row2H);
-  btnSpeed.x = w / 2;     // ✅ pile sous SPIN
-  btnSpeed.y = row2Y;
+  const speedW = buttonWidth;             // ✅ comme SPIN
+  const speedH = Math.round(buttonHeight * 0.95); // un peu plus haut pour 2 lignes
+  btnSpeed = makeSpeedButton(speedW, speedH);
+  btnSpeed.x = btnSpin.x;      // ✅ sous SPIN
+  btnSpeed.y = bottomY;
 
-  btnInfo = makeButton("INFO", infoW, row2H);
-  btnInfo.x = btnSpeed.x + speedW / 2 + row2Gap + infoW / 2; // ✅ à droite de VITESSE
-  btnInfo.y = row2Y;
+  const infoW = Math.round(buttonWidth * 0.9);
+  const infoH = Math.round(buttonHeight * 0.75);
+  btnInfo = makeButton("INFO", infoW, infoH);
+  btnInfo.x = btnPlus.x;       // ✅ centré sous +1
+  btnInfo.y = bottomY;
 
+  // events
   btnMinus.on("pointerup", onBetMinus);
   btnPlus.on("pointerup", onBetPlus);
   btnSpin.on("pointerup", onSpinClick);
   btnInfo.on("pointerup", togglePaytable);
 
+  // (clic vitesse) – tu as dit “plus tard”, mais je le laisse prêt
   btnSpeed.on("pointerup", () => {
     if (spinning) return;
-    speedIndex = (speedIndex + 1) % SPEEDS.length;
-    btnSpeed.setLabel(`VITESSE : ${getSpeedProfile().name}`);
+    cycleSpeed();
   });
 
   updateHUDNumbers();
+  refreshSpeedButton();
 }
 
 function updateHUDTexts(msg) {
@@ -863,33 +934,6 @@ function togglePaytable(forceVisible) {
 }
 
 // --------------------------------------------------
-// Application grille backend (après anim / ou resize)
-// --------------------------------------------------
-function applyResultToReels(grid) {
-  if (!Array.isArray(grid) || grid.length !== ROWS) return;
-
-  for (let r = 0; r < ROWS; r++) {
-    for (let c = 0; c < COLS; c++) {
-      const value = grid[r][c];
-      const reel = reels[c];
-      if (!reel || !reel.symbols[r]) continue;
-
-      const safeId =
-        ((value % symbolTextures.length) + symbolTextures.length) % symbolTextures.length;
-
-      const tex = symbolTextures[safeId];
-      const cellObj = reel.symbols[r];
-
-      cellObj.main.texture = tex;
-      cellObj.glow.texture = tex;
-
-      applySymbolVisual(cellObj, safeId);
-      cellObj.container.alpha = 1;
-    }
-  }
-}
-
-// --------------------------------------------------
 // Evaluation gains
 // --------------------------------------------------
 function evaluateGrid(grid, betValue) {
@@ -1001,14 +1045,7 @@ async function onSpinClick() {
 
   lastWin = 0;
   updateHUDNumbers();
-
-  const sp = getSpeedProfile();
-  updateHUDTexts(
-    paidSpin
-      ? `Spin… (${sp.name})`
-      : `Free spin… restants : ${freeSpins} (${sp.name})`
-  );
-
+  updateHUDTexts(paidSpin ? "Spin en cours…" : `Free spin… restants : ${freeSpins}`);
   playSound("spin");
 
   try {
@@ -1021,8 +1058,8 @@ async function onSpinClick() {
     const data = await response.json();
     const grid = data.result || data.grid || data;
 
-    // ✅ animation fluide + stop reel par reel + bounce
-    await animateSpinVisual(grid);
+    // ✅ animation fluide (gauche->droite) + stop par rouleau + bounce
+    await animateSpinReels(grid);
 
     const { baseWin, winningLines, bonusTriggered } = evaluateGrid(grid, effectiveBet);
 
@@ -1061,7 +1098,6 @@ function finishSpin(win, winningLines, bonusTriggered) {
     winningLines?.forEach((line) => line.cells.forEach((c) => cells.push(c)));
     if (cells.length) startHighlight(cells);
   } else {
-    playSound("stop");
     updateHUDTexts(
       freeSpins > 0
         ? `Pas de gain — free spins : ${freeSpins}`
