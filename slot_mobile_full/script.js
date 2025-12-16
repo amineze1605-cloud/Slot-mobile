@@ -7,7 +7,8 @@
 // ✅ CAP: ne jamais upscaler au-dessus de 256px (taille source)
 // ✅ SPIN ANIM: reel par reel + départ doux + arrêt + bounce
 // ✅ MASK FIX: mask sur app.stage (pas enfant du slotContainer) => plus d’écran vide
-// ✅ PATCH: bounce "primé" (pas de décalage à l’arrêt)
+// ✅ PATCH SWAP: extraTop = topId au final (plus de swap au bounce)
+// ✅ PATCH BOUNCE: bounce intégré au settle (plus de décalage)
 
 // --------------------------------------------------
 // PIXI global settings (IMPORTANT)
@@ -76,8 +77,8 @@ const SPEEDS = [
     accelMs: 280,
     preDecelMs: 260,
     settleMs: 320,
-    bounceMs: 260,
-    bounceAmpFactor: 0.22, // * reelStep
+    bounceMs: 260,          // gardé mais utilisé comme “fenêtre” de bounce intégrée
+    bounceAmpFactor: 0.22,  // * reelStep
   },
   {
     name: "NORMAL",
@@ -108,7 +109,7 @@ const SPEEDS = [
 let speedIndex = 0; // 0=LENT,1=NORMAL,2=RAPIDE
 
 // --------------------------------------------------
-// VISUEL (Glow) – tes valeurs actuelles
+// VISUEL (Glow)
 // --------------------------------------------------
 const GLOW_COLORS = {
   wild: 0x2bff5a,
@@ -212,7 +213,7 @@ function loadSpritesheet() {
 }
 
 // --------------------------------------------------
-// GlowFilters (partagés) – resolution = renderer.resolution
+// GlowFilters
 // --------------------------------------------------
 function buildGlowFilters() {
   const hasGlow = !!(PIXI.filters && PIXI.filters.GlowFilter);
@@ -285,7 +286,6 @@ async function initPixi() {
     const fullW = baseTexture.width;
     const fullH = baseTexture.height;
 
-    // 4x4 => 256x256
     const COLS_SHEET = 4;
     const ROWS_SHEET = 4;
     const cellW = Math.round(fullW / COLS_SHEET);
@@ -344,7 +344,7 @@ async function initPixi() {
 }
 
 // --------------------------------------------------
-// Crée une “cellule” symbole : glow derrière + symbole net devant
+// Symbol cell
 // --------------------------------------------------
 function createSymbolCell(texture, sizePx) {
   const cell = new PIXI.Container();
@@ -411,7 +411,7 @@ function setCellSymbol(cellObj, symbolId) {
 }
 
 // --------------------------------------------------
-// Construction scène slot + MASK (FIX STABLE)
+// Slot scene + mask
 // --------------------------------------------------
 function buildSlotScene() {
   const w = app.screen.width;
@@ -438,7 +438,6 @@ function buildSlotScene() {
   slotContainer.x = Math.round((w - totalReelWidth) / 2);
   slotContainer.y = Math.round(h * 0.22);
 
-  // Frame
   const framePaddingX = 18;
   const framePaddingY = 18;
 
@@ -455,7 +454,6 @@ function buildSlotScene() {
   slotFrame.endFill();
   app.stage.addChildAt(slotFrame, 0);
 
-  // ✅ MASK FIX: mask AU NIVEAU DU STAGE (PAS enfant du slotContainer)
   if (slotMask) {
     slotMask.destroy(true);
     slotMask = null;
@@ -466,13 +464,11 @@ function buildSlotScene() {
   slotMask.endFill();
   slotMask.x = slotContainer.x;
   slotMask.y = slotContainer.y;
-
   slotMask.renderable = false;
 
   app.stage.addChild(slotMask);
   slotContainer.mask = slotMask;
 
-  // Reels
   reels = [];
 
   for (let c = 0; c < COLS; c++) {
@@ -481,14 +477,12 @@ function buildSlotScene() {
     reelContainer.x = Math.round(c * (symbolSize + reelGap));
     reelContainer.y = 0;
 
-    // on garde 4 symboles: 1 extra en haut + 3 visibles
     const cells = [];
     for (let i = 0; i < ROWS + 1; i++) {
       const idx = randomSymbolId();
       const cellObj = createSymbolCell(symbolTextures[idx], symbolSize);
       setCellSymbol(cellObj, idx);
 
-      // i=0 = extra top
       const y = Math.round(i * reelStep - reelStep + symbolSize / 2);
       cellObj.container.x = Math.round(symbolSize / 2);
       cellObj.container.y = y;
@@ -505,9 +499,9 @@ function buildSlotScene() {
       settled: false,
       finalApplied: false,
 
-      // ✅ bounce state (évite décalage/relance)
-      bouncing: false,
-      bounceStart: 0,
+      // settle memory (pour bounce intégré)
+      settleOffset0: 0,
+      settleInit: false,
     });
   }
 }
@@ -649,10 +643,9 @@ function buildHUD() {
   btnPlus.x = btnSpin.x + (buttonWidth + spacingX);
   btnPlus.y = buttonsY;
 
-  // 2e ligne: VITESSE sous SPIN + INFO sous +1
   const secondY = buttonsY + buttonHeight + h * 0.02;
 
-  const speedW = buttonWidth;            // comme SPIN
+  const speedW = buttonWidth;
   const speedH = buttonHeight * 0.90;
 
   btnSpeed = makeSpeedButton(speedW, speedH);
@@ -665,7 +658,6 @@ function buildHUD() {
   btnInfo.x = btnPlus.x;
   btnInfo.y = secondY;
 
-  // ✅ évite que INFO soit coupé à droite
   const safeRight = w - w * 0.03;
   if (btnInfo.x + infoW / 2 > safeRight) {
     btnInfo.x = safeRight - infoW / 2;
@@ -694,7 +686,7 @@ function updateHUDNumbers() {
 }
 
 // --------------------------------------------------
-// Paytable overlay (auto-fit texte)
+// Paytable overlay (inchangé)
 // --------------------------------------------------
 function createPaytableOverlay() {
   const w = app.screen.width;
@@ -824,7 +816,7 @@ function togglePaytable(forceVisible) {
 }
 
 // --------------------------------------------------
-// Application grille backend (sécurité)
+// Application grille backend
 // --------------------------------------------------
 function applyResultToReels(grid) {
   if (!Array.isArray(grid) || grid.length !== ROWS) return;
@@ -930,7 +922,7 @@ function updateHighlight(delta) {
 }
 
 // --------------------------------------------------
-// Easing helpers
+// Easing
 // --------------------------------------------------
 function clamp01(t) { return Math.max(0, Math.min(1, t)); }
 function easeOutCubic(t) { t = clamp01(t); return 1 - Math.pow(1 - t, 3); }
@@ -940,10 +932,9 @@ function easeInOutQuad(t) {
 }
 
 // --------------------------------------------------
-// Spin anim reel-by-reel + settle + bounce (fluide)
+// Spin anim
 // --------------------------------------------------
 function shiftReelOneStepDown(reel, nextTopId) {
-  // order symbols: [extraTop, row0, row1, row2]
   const s = reel.symbols;
   setCellSymbol(s[3], s[2].symbolId);
   setCellSymbol(s[2], s[1].symbolId);
@@ -959,7 +950,8 @@ function setFinalColumnOnReel(reelIndex, finalGrid) {
   const midId = finalGrid[1][reelIndex];
   const botId = finalGrid[2][reelIndex];
 
-  const extraId = randomSymbolId();
+  // ✅ PATCH SWAP: extraTop = topId (comme ça, si le bounce le montre, pas de "swap")
+  const extraId = topId;
 
   setCellSymbol(reel.symbols[0], extraId);
   setCellSymbol(reel.symbols[1], topId);
@@ -979,9 +971,8 @@ function animateSpinReels(finalGrid) {
     reel.settled = false;
     reel.finalApplied = false;
 
-    // bounce state
-    reel.bouncing = false;
-    reel.bounceStart = 0;
+    reel.settleOffset0 = 0;
+    reel.settleInit = false;
   });
 
   const startTime = performance.now();
@@ -997,6 +988,11 @@ function animateSpinReels(finalGrid) {
   });
 
   const bounceAmp = Math.min(reelStep * preset.bounceAmpFactor, 22);
+
+  // bounce sur la fin du settle (fenêtre)
+  const bounceWindow = Math.max(120, Math.min(preset.bounceMs, preset.settleMs));
+  const bounceStartFrac = clamp01(1 - bounceWindow / preset.settleMs); // ex: 0.65..0.80 selon vitesses
+  const bounceFracRange = Math.max(0.12, 1 - bounceStartFrac);
 
   return new Promise((resolve) => {
     let prev = performance.now();
@@ -1019,56 +1015,41 @@ function animateSpinReels(finalGrid) {
         if (reel.settled) continue;
         allDone = false;
 
-        // ✅ BOUNCE en cours (géré dans le tick, stable)
-        if (reel.bouncing) {
-          const tb = clamp01((now - reel.bounceStart) / preset.bounceMs);
-          const s = Math.sin(tb * Math.PI);
-          const amp = bounceAmp * (1 - tb * 0.18);
+        // --- SETTLE (avec bounce intégré)
+        if (now >= p.settleStart) {
+          if (!reel.finalApplied) {
+            setFinalColumnOnReel(c, finalGrid);
+            reel.offset = ((reel.offset % reelStep) + reelStep) % reelStep;
 
-          reel.container.y = -s * amp;
+            reel.settleOffset0 = reel.offset;
+            reel.settleInit = true;
+          }
 
-          if (tb >= 1) {
+          const t = clamp01((now - p.settleStart) / preset.settleMs);
+          const e = easeOutCubic(t);
+
+          const baseY = (1 - e) * (reel.settleInit ? reel.settleOffset0 : reel.offset);
+
+          // bounce qui démarre AVANT la fin (pas de pause)
+          let bounceY = 0;
+          if (t >= bounceStartFrac) {
+            const u = clamp01((t - bounceStartFrac) / bounceFracRange); // 0..1 fin
+            const s = Math.sin(u * Math.PI);           // 0..1..0
+            const amp = bounceAmp * (1 - u * 0.18);    // amorti léger
+            bounceY = -s * amp;
+          }
+
+          reel.container.y = baseY + bounceY;
+
+          if (t >= 1) {
             reel.container.y = 0;
             reel.offset = 0;
-            reel.bouncing = false;
             reel.settled = true;
           }
           continue;
         }
 
-        // --- SETTLE PHASE (final symbols, offset -> 0, puis bounce)
-        if (now >= p.settleStart) {
-          if (!reel.finalApplied) {
-            setFinalColumnOnReel(c, finalGrid);
-            reel.offset = ((reel.offset % reelStep) + reelStep) % reelStep;
-          }
-
-          const tSettle = clamp01((now - p.settleStart) / preset.settleMs);
-          const e = easeOutCubic(tSettle);
-
-          reel.offset = (1 - e) * reel.offset;
-          reel.container.y = reel.offset;
-
-          if (tSettle >= 1) {
-            reel.offset = 0;
-
-            // ✅ PATCH: bounce "primé" (pas de décalage perceptible)
-            reel.bouncing = true;
-
-            const prime = Math.min(dt, 20); // évite gros saut si frame drop
-            reel.bounceStart = now - prime;
-
-            // applique tout de suite la 1ère position du bounce (même frame)
-            const tb0 = clamp01(prime / preset.bounceMs);
-            const s0 = Math.sin(tb0 * Math.PI);
-            const amp0 = bounceAmp * (1 - tb0 * 0.18);
-            reel.container.y = -s0 * amp0;
-          }
-
-          continue;
-        }
-
-        // --- SPIN PHASE (scroll vers le bas)
+        // --- SPIN
         reel.spinning = true;
 
         let speed = preset.basePxPerMs;
@@ -1096,7 +1077,6 @@ function animateSpinReels(finalGrid) {
         resolve();
         return;
       }
-
       requestAnimationFrame(tick);
     }
 
@@ -1148,6 +1128,7 @@ async function onSpinClick() {
 
     await animateSpinReels(grid);
 
+    // sécurité
     applyResultToReels(grid);
 
     const { baseWin, winningLines, bonusTriggered } = evaluateGrid(grid, effectiveBet);
