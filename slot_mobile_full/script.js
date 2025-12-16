@@ -5,7 +5,7 @@
 // ✅ VISUEL: Glow propre (copie derrière) => symboles nets, glow seulement 77/WILD/BONUS
 // ✅ INFO: texte auto-fit => plus de texte caché par le bouton
 // ✅ CAP: ne jamais upscaler au-dessus de 256px (taille source)
-// ✅ SPIN ANIM: shuffle rapide + arrêt sur résultat backend (A,B,C,D)
+// ✅ SPIN ANIM: smooth (ease) + arrêt en cascade + 3 vitesses sélectionnables
 
 // --------------------------------------------------
 // PIXI global settings (IMPORTANT)
@@ -23,10 +23,6 @@ const loaderEl = document.getElementById("loader");
 let app;
 let symbolTextures = [];
 let reels = [];
-
-// --- (A) paramètres animation spin
-const SPIN_VISUAL_MS = 750;     // durée animation
-const SHUFFLE_EVERY_MS = 55;    // vitesse shuffle
 
 const COLS = 5;
 const ROWS = 3;
@@ -47,12 +43,54 @@ let winMultiplier = 1;
 // HUD
 let messageText;
 let statsText;
-let btnMinus, btnPlus, btnSpin, btnInfo;
+let btnMinus, btnPlus, btnSpin, btnInfo, btnSpeed;
 let paytableOverlay = null;
 
 // clignotement gagnant
 let highlightedCells = [];
 let highlightTimer = 0;
+
+// --------------------------------------------------
+// (A) Vitesses de spin (3 modes)
+// --------------------------------------------------
+const SPEED_PRESETS = [
+  // plus lent = plus long + ralentissement plus visible
+  { key: "SLOW",   label: "LENT",   totalSpinMs: 1250, shuffleMinMs: 70, slowDownMs: 450, stopStaggerMs: 140 },
+  { key: "NORM",   label: "NORMAL", totalSpinMs: 850,  shuffleMinMs: 55, slowDownMs: 320, stopStaggerMs: 100 },
+  { key: "FAST",   label: "RAPIDE", totalSpinMs: 600,  shuffleMinMs: 40, slowDownMs: 240, stopStaggerMs: 80  },
+];
+
+let speedIndex = 1; // default NORMAL
+try {
+  const saved = localStorage.getItem("slot_speed_index");
+  if (saved !== null) speedIndex = Math.max(0, Math.min(SPEED_PRESETS.length - 1, parseInt(saved, 10)));
+} catch (e) {}
+
+function getSpeedPreset() {
+  return SPEED_PRESETS[speedIndex] || SPEED_PRESETS[1];
+}
+
+function cycleSpeed() {
+  speedIndex = (speedIndex + 1) % SPEED_PRESETS.length;
+  try { localStorage.setItem("slot_speed_index", String(speedIndex)); } catch (e) {}
+  refreshSpeedButtonLabel();
+
+  if (!spinning) {
+    updateHUDTexts(`Vitesse : ${getSpeedPreset().label}`);
+    // petit retour message "normal"
+    setTimeout(() => {
+      if (!spinning) updateHUDTexts("Appuyez sur SPIN pour lancer");
+    }, 900);
+  }
+}
+
+function refreshSpeedButtonLabel() {
+  if (!btnSpeed || !btnSpeed.setLabel) return;
+  const p = getSpeedPreset();
+  // style "x1/x2/x3" comme les slots
+  const x = (speedIndex + 1);
+  btnSpeed.setLabel(`x${x}`);
+}
 
 // --------------------------------------------------
 // VISUEL (Glow)
@@ -192,12 +230,10 @@ function buildGlowFilters() {
     GLOW_PARAMS.premium.quality
   );
 
-  // Important pour éviter la “perte de netteté” sur iPhone
   fWild.resolution = r;
   fBonus.resolution = r;
   fPremium.resolution = r;
 
-  // évite que le glow soit coupé
   fWild.padding = GLOW_PARAMS.wild.distance * 2;
   fBonus.padding = GLOW_PARAMS.bonus.distance * 2;
   fPremium.padding = GLOW_PARAMS.premium.distance * 2;
@@ -344,8 +380,13 @@ function applySymbolVisual(cellObj, symbolId) {
 }
 
 // --------------------------------------------------
-// (B) helpers spin anim
+// Helpers spin anim
 // --------------------------------------------------
+function clamp01(v) { return Math.max(0, Math.min(1, v)); }
+function lerp(a, b, t) { return a + (b - a) * t; }
+// easing doux pour décélération
+function easeOutCubic(t) { return 1 - Math.pow(1 - t, 3); }
+
 function randomSymbolId() {
   return Math.floor(Math.random() * symbolTextures.length);
 }
@@ -360,38 +401,74 @@ function setCellSymbol(cellObj, symbolId) {
   applySymbolVisual(cellObj, safeId);
 }
 
+function applyFinalReel(col, finalGrid) {
+  for (let r = 0; r < ROWS; r++) {
+    const cellObj = reels[col]?.symbols[r];
+    if (!cellObj) continue;
+    setCellSymbol(cellObj, finalGrid[r][col]);
+    cellObj.container.alpha = 1;
+  }
+}
+
 // --------------------------------------------------
-// (C) animation visuelle du spin
+// (C) animation visuelle du spin (smooth + arrêt en cascade)
 // --------------------------------------------------
 function animateSpinVisual(finalGrid) {
+  const sp = getSpeedPreset();
+
   return new Promise((resolve) => {
     const start = performance.now();
-    let lastShuffle = 0;
+
+    // moment où chaque reel s'arrête (cascade)
+    const reelStopAt = Array.from({ length: COLS }, (_, c) =>
+      start + sp.totalSpinMs + c * sp.stopStaggerMs
+    );
+
+    // suivi shuffle par reel
+    const lastShuffleAt = Array(COLS).fill(0);
+    const stopped = Array(COLS).fill(false);
 
     function tick(now) {
-      const elapsed = now - start;
+      let allStopped = true;
 
-      if (now - lastShuffle > SHUFFLE_EVERY_MS) {
-        lastShuffle = now;
+      for (let c = 0; c < COLS; c++) {
+        if (stopped[c]) continue;
 
-        for (let c = 0; c < COLS; c++) {
+        allStopped = false;
+
+        const stopT = reelStopAt[c];
+        const remaining = stopT - now;
+
+        // on est dans la zone de décélération (les dernières slowDownMs)
+        const slowWindow = sp.slowDownMs;
+        const slowT = 1 - clamp01(remaining / slowWindow); // 0 -> 1
+        const ease = easeOutCubic(clamp01(slowT));
+
+        // intervalle dynamique : au début rapide, puis ralentit progressivement
+        const minI = sp.shuffleMinMs;
+        const maxI = sp.shuffleMinMs * 4.0; // ralentissement visible
+        const interval = lerp(minI, maxI, ease);
+
+        if (now - lastShuffleAt[c] >= interval) {
+          lastShuffleAt[c] = now;
           for (let r = 0; r < ROWS; r++) {
             const cellObj = reels[c]?.symbols[r];
             if (!cellObj) continue;
-
-            // pendant l'anim: shuffle rapide
             setCellSymbol(cellObj, randomSymbolId());
           }
         }
+
+        // stop reel
+        if (remaining <= 0) {
+          stopped[c] = true;
+          applyFinalReel(c, finalGrid);
+        }
       }
 
-      if (elapsed >= SPIN_VISUAL_MS) {
-        // fin: applique le vrai résultat
-        applyResultToReels(finalGrid);
+      if (allStopped) {
         resolve();
         return;
       }
-
       requestAnimationFrame(tick);
     }
 
@@ -413,6 +490,7 @@ function buildSlotScene() {
   const symbolFromHeight = h * 0.16;
   const symbolFromWidth = (maxTotalWidth - gap * (COLS - 1)) / COLS;
 
+  // ✅ CAP: ne jamais dépasser la taille source (256px)
   const MAX_SYMBOL_PX = 256;
   const symbolSize = Math.min(
     MAX_SYMBOL_PX,
@@ -519,6 +597,11 @@ function makeButton(label, width, height) {
   container.on("pointerup", () => (g.alpha = 1.0));
   container.on("pointerupoutside", () => (g.alpha = 1.0));
 
+  // ✅ helper pour changer le label après création
+  container.setLabel = (newLabel) => {
+    t.text = newLabel;
+  };
+
   app.stage.addChild(container);
   return container;
 }
@@ -554,17 +637,28 @@ function buildHUD() {
   btnPlus.x = btnSpin.x + (buttonWidth + spacingX);
   btnPlus.y = buttonsY;
 
-  const infoWidth = buttonWidth * 0.9;
-  const infoHeight = buttonHeight * 0.75;
-  btnInfo = makeButton("INFO", infoWidth, infoHeight);
-  btnInfo.x = w / 2;
-  btnInfo.y = buttonsY + buttonHeight + h * 0.02;
+  // --- INFO + VITESSE côte à côte
+  const smallH = buttonHeight * 0.75;
+  const smallW = w * 0.30;
+  const smallGap = w * 0.04;
+  const smallY = buttonsY + buttonHeight + h * 0.02;
+
+  btnInfo = makeButton("INFO", smallW, smallH);
+  btnSpeed = makeButton("x2", smallW, smallH);
+
+  btnInfo.x = w / 2 - (smallW / 2) - (smallGap / 2);
+  btnSpeed.x = w / 2 + (smallW / 2) + (smallGap / 2);
+
+  btnInfo.y = smallY;
+  btnSpeed.y = smallY;
 
   btnMinus.on("pointerup", onBetMinus);
   btnPlus.on("pointerup", onBetPlus);
   btnSpin.on("pointerup", onSpinClick);
   btnInfo.on("pointerup", togglePaytable);
+  btnSpeed.on("pointerup", cycleSpeed);
 
+  refreshSpeedButtonLabel();
   updateHUDNumbers();
 }
 
@@ -728,18 +822,9 @@ function applyResultToReels(grid) {
       cellObj.glow.texture = tex;
 
       applySymbolVisual(cellObj, safeId);
-
       cellObj.container.alpha = 1;
     }
   }
-}
-
-function getTextureByIndex(index) {
-  if (!symbolTextures.length) return PIXI.Texture.WHITE;
-  const safeIndex =
-    ((index % symbolTextures.length) + symbolTextures.length) %
-    symbolTextures.length;
-  return symbolTextures[safeIndex] || symbolTextures[0];
 }
 
 // --------------------------------------------------
@@ -867,7 +952,7 @@ async function onSpinClick() {
     const data = await response.json();
     const grid = data.result || data.grid || data;
 
-    // (D) ✅ animation visuelle + arrêt sur résultat
+    // ✅ animation smooth + cascade + vitesse choisie
     await animateSpinVisual(grid);
 
     const { baseWin, winningLines, bonusTriggered } = evaluateGrid(grid, effectiveBet);
