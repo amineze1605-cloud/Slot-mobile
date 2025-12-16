@@ -3,22 +3,16 @@
 // ✅ FIX iPhone: autoDensity + resolution (DPR) + layout basé sur app.screen.*
 // ✅ Anti-bleeding: clamp + mipmaps off + PAD
 // ✅ VISUEL: Glow propre (copie derrière) => symboles nets, glow seulement 77/WILD/BONUS
-// ✅ INFO: texte auto-fit => plus de texte caché par le bouton
-// ✅ CAP: ne jamais upscaler au-dessus de 256px (taille source)
-// ✅ SPIN: défilement réel vers le bas + départ doux + start gauche→droite + stop reel par reel + bounce
-// ✅ FIX STOP POP: préparation du résultat AVANT arrêt + mask + buffer symbols (plus de "swap visible" au stop)
-// ✅ UI: bouton VITESSE sous SPIN (2 lignes), bouton INFO sous +1 (aligné)
+// ✅ INFO: texte auto-fit
+// ✅ CAP: ne jamais upscaler au-dessus de 256px
+// ✅ SPIN: défilement réel vers le bas + start gauche->droite + stop reel par reel + bounce
+// ✅ FIX STOP SWAP: prépare le résultat sur les 3 sprites qui seront visibles au stop + lock + wrap safe
+// ✅ UI: VITESSE (2 lignes) sous SPIN, INFO sous +1 (clamp anti-coupure)
 
-// --------------------------------------------------
-// PIXI global settings (IMPORTANT)
-// --------------------------------------------------
 PIXI.settings.ROUND_PIXELS = true;
 PIXI.settings.MIPMAP_TEXTURES = PIXI.MIPMAP_MODES.OFF;
 PIXI.settings.SCALE_MODE = PIXI.SCALE_MODES.LINEAR;
 
-// --------------------------------------------------
-// DOM & globales
-// --------------------------------------------------
 const canvas = document.getElementById("game");
 const loaderEl = document.getElementById("loader");
 
@@ -29,16 +23,14 @@ let reels = [];
 const COLS = 5;
 const ROWS = 3;
 
-// ✅ Buffer pour cacher les swaps (1 au-dessus + 1 en dessous)
+// Buffer (1 au-dessus + 1 en dessous)
 const EXTRA_ROWS = 2;
-const REEL_SYMBOLS = ROWS + EXTRA_ROWS; // 5 symboles par rouleau (3 visibles + 2 cachés)
+const REEL_SYMBOLS = ROWS + EXTRA_ROWS; // 5
 
-// IDs
 const WILD_ID = 9;
 const BONUS_ID = 6;
 const PREMIUM77_ID = 0;
 
-// état jeu
 let balance = 1000;
 let bet = 1;
 let lastWin = 0;
@@ -46,26 +38,20 @@ let spinning = false;
 let freeSpins = 0;
 let winMultiplier = 1;
 
-// HUD
 let messageText;
 let statsText;
 let btnMinus, btnPlus, btnSpin, btnInfo, btnSpeed;
 let paytableOverlay = null;
 
-// clignotement gagnant
 let highlightedCells = [];
 let highlightTimer = 0;
 
-// --------------------------------------------------
-// Dimensions symboles / pas vertical (pour vrai défilement)
-// --------------------------------------------------
+// Layout reel
 let SYMBOL_SIZE = 0;
 let GAP = 8;
-let STEP_Y = 0; // SYMBOL_SIZE + GAP
+let STEP_Y = 0;
 
-// --------------------------------------------------
-// VISUEL (Glow)
-// --------------------------------------------------
+// Glow
 const GLOW_COLORS = {
   wild: 0x2bff5a,
   bonus: 0x3aa6ff,
@@ -80,9 +66,7 @@ const GLOW_PARAMS = {
 
 let glowFilters = null;
 
-// --------------------------------------------------
-// AUDIO
-// --------------------------------------------------
+// Audio
 const sounds = {
   spin: new Audio("assets/audio/spin.mp3"),
   stop: new Audio("assets/audio/stop.mp3"),
@@ -104,9 +88,7 @@ function playSound(name) {
   } catch (e) {}
 }
 
-// --------------------------------------------------
-// Paylines & paytable
-// --------------------------------------------------
+// Paylines / Paytable
 const PAYLINES = [
   [[0, 0],[1, 0],[2, 0],[3, 0],[4, 0]],
   [[0, 1],[1, 1],[2, 1],[3, 1],[4, 1]],
@@ -128,20 +110,15 @@ const PAYTABLE = {
   0:  { 3: 30, 4: 40, 5: 50 },
 };
 
-// --------------------------------------------------
-// VITESSES (3 modes)
-// --------------------------------------------------
+// ✅ VITESSES (départ un peu + rapide, spin + long)
 const SPEEDS = [
-  { key:"LENT",   reelTime:1300, startStagger:170, stopStagger:190, startSpeed:60,  maxSpeed:1250, endSpeed:220, bouncePx:10, bounceMs:260 },
-  { key:"NORMAL", reelTime:1050, startStagger:150, stopStagger:170, startSpeed:80,  maxSpeed:1500, endSpeed:260, bouncePx:9,  bounceMs:240 },
-  { key:"RAPIDE", reelTime:850,  startStagger:135, stopStagger:150, startSpeed:110, maxSpeed:1900, endSpeed:320, bouncePx:8,  bounceMs:220 },
+  { key:"LENT",   reelTime:1550, startStagger:170, stopStagger:200, startSpeed:78,  maxSpeed:1250, endSpeed:220, bouncePx:10, bounceMs:260 },
+  { key:"NORMAL", reelTime:1250, startStagger:150, stopStagger:180, startSpeed:95,  maxSpeed:1500, endSpeed:260, bouncePx:9,  bounceMs:240 },
+  { key:"RAPIDE", reelTime:1020, startStagger:135, stopStagger:160, startSpeed:120, maxSpeed:1900, endSpeed:320, bouncePx:8,  bounceMs:220 },
 ];
-
 let speedIndex = 0;
 
-// --------------------------------------------------
-// Helpers UI
-// --------------------------------------------------
+// Helpers UI loader
 function showMessage(text) {
   if (!loaderEl) return;
   loaderEl.style.display = "flex";
@@ -152,9 +129,7 @@ function hideMessage() {
   loaderEl.style.display = "none";
 }
 
-// --------------------------------------------------
-// Chargement spritesheet.png
-// --------------------------------------------------
+// Load spritesheet
 function loadSpritesheet() {
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -178,9 +153,7 @@ function loadSpritesheet() {
   });
 }
 
-// --------------------------------------------------
 // GlowFilters
-// --------------------------------------------------
 function buildGlowFilters() {
   const hasGlow = !!(PIXI.filters && PIXI.filters.GlowFilter);
   if (!hasGlow) return null;
@@ -217,9 +190,7 @@ function buildGlowFilters() {
   return { wild: fWild, bonus: fBonus, premium: fPremium };
 }
 
-// --------------------------------------------------
-// Initialisation PIXI
-// --------------------------------------------------
+// Init PIXI
 async function initPixi() {
   if (!canvas) return console.error("Canvas #game introuvable");
   if (!window.PIXI) {
@@ -302,9 +273,7 @@ async function initPixi() {
   }
 }
 
-// --------------------------------------------------
-// Cellule symbole : glow derrière + symbole net devant
-// --------------------------------------------------
+// Symbol cell
 function createSymbolCell(texture, symbolSize) {
   const cell = new PIXI.Container();
   cell.roundPixels = true;
@@ -325,7 +294,13 @@ function createSymbolCell(texture, symbolSize) {
 
   cell.addChild(glowSprite, mainSprite);
 
-  return { container: cell, glow: glowSprite, main: mainSprite, symbolId: -1, baseY: 0 };
+  return {
+    container: cell,
+    glow: glowSprite,
+    main: mainSprite,
+    symbolId: -1,
+    locked: false, // ✅ lock anti-swap
+  };
 }
 
 function applySymbolVisual(cellObj, symbolId) {
@@ -353,9 +328,6 @@ function applySymbolVisual(cellObj, symbolId) {
   }
 }
 
-// --------------------------------------------------
-// Helpers spin
-// --------------------------------------------------
 function randomSymbolId() {
   return Math.floor(Math.random() * symbolTextures.length);
 }
@@ -370,57 +342,38 @@ function setCellSymbol(cellObj, symbolId) {
   applySymbolVisual(cellObj, safeId);
 }
 
-// ✅ Fix "pop": prépare les 3 symboles visibles pour ce rouleau AVANT le stop
+// ✅ Fix swap: on prépare le résultat sur les 3 sprites qui seront visibles au stop
 function prepareFinalForReel(col, finalGrid) {
   const reel = reels[col];
   if (!reel) return;
 
-  const targets = [
-    Math.round(SYMBOL_SIZE / 2),
-    Math.round(SYMBOL_SIZE / 2 + STEP_Y),
-    Math.round(SYMBOL_SIZE / 2 + STEP_Y * 2),
-  ];
+  const sorted = reel.symbols.slice().sort((a, b) => a.container.y - b.container.y);
 
-  // pool des cellObj
-  const pool = reel.symbols.slice();
-
+  // sorted[0] = buffer haut, sorted[1..3] = visibles, sorted[4] = buffer bas
   for (let row = 0; row < ROWS; row++) {
-    const ty = targets[row];
+    const cellObj = sorted[row + 1];
+    if (!cellObj) continue;
 
-    let bestIdx = -1;
-    let bestDist = Infinity;
-    for (let i = 0; i < pool.length; i++) {
-      const d = Math.abs(pool[i].container.y - ty);
-      if (d < bestDist) { bestDist = d; bestIdx = i; }
-    }
-
-    const chosen = pool.splice(bestIdx, 1)[0];
-    if (!chosen) continue;
-
+    cellObj.locked = true; // ✅ plus jamais random
     const value = finalGrid[row][col];
-    setCellSymbol(chosen, value);
+    setCellSymbol(cellObj, value);
   }
 }
 
-// ✅ Fix "pop": au stop on recolle uniquement les positions (pas de changement de texture)
+// Snap positions (sans changer textures)
 function snapReelPositions(col) {
   const reel = reels[col];
   if (!reel) return;
 
-  // tri de haut -> bas sur les y actuels
   const sorted = reel.symbols.slice().sort((a, b) => a.container.y - b.container.y);
 
-  // position du symbol du haut (buffer au-dessus)
-  const topY = Math.round(SYMBOL_SIZE / 2 - STEP_Y);
-
+  const topY = Math.round(SYMBOL_SIZE / 2 - STEP_Y); // buffer haut
   for (let i = 0; i < sorted.length; i++) {
     sorted[i].container.y = topY + i * STEP_Y;
   }
 }
 
-// --------------------------------------------------
-// SPIN ANIM: vrai défilement + start gauche->droite + stop reel par reel + bounce
-// --------------------------------------------------
+// Spin anim
 function animateSpinReels(finalGrid) {
   return new Promise((resolve) => {
     const sp = SPEEDS[speedIndex] || SPEEDS[0];
@@ -431,6 +384,7 @@ function animateSpinReels(finalGrid) {
     const clamp01 = (x) => Math.max(0, Math.min(1, x));
     const lerp = (a, b, t) => a + (b - a) * t;
 
+    // départ smooth
     const easeInQuart = (t) => t * t * t * t;
     const easeOutCubic = (t) => {
       t = 1 - t;
@@ -447,23 +401,25 @@ function animateSpinReels(finalGrid) {
       bouncing: false,
       bounceStart: 0,
       baseReelY: 0,
-      prepared: false, // ✅ pop fix
+      prepared: false,
     }));
 
     for (let c = 0; c < COLS; c++) {
       state[c].baseReelY = reels[c]?.container?.y || 0;
     }
 
-    // wrap: seuil bas (buffer du bas) + marge
-    const wrapBottom = Math.round(SYMBOL_SIZE / 2 + ROWS * STEP_Y); // buffer du bas est à ~ ROWS*STEP_Y
+    const wrapBottom = Math.round(SYMBOL_SIZE / 2 + ROWS * STEP_Y);
     const wrapThreshold = wrapBottom + STEP_Y * 0.6;
     const wrapShift = REEL_SYMBOLS * STEP_Y;
 
     function wrapCellDown(cellObj) {
       if (cellObj.container.y > wrapThreshold) {
         cellObj.container.y -= wrapShift;
-        // on change le symbole seulement pendant la phase "random"
-        setCellSymbol(cellObj, randomSymbolId());
+
+        // ✅ important: si locked => jamais random (sinon swap possible à la fin)
+        if (!cellObj.locked) {
+          setCellSymbol(cellObj, randomSymbolId());
+        }
       }
     }
 
@@ -493,9 +449,8 @@ function animateSpinReels(finalGrid) {
         if (!st.stopped) {
           allDone = false;
 
-          // départ + accel très doux
-          const accelPart = 0.60;
-          const decelPart = 0.28;
+          const accelPart = 0.58;
+          const decelPart = 0.32;
 
           let speed;
           if (p < accelPart) {
@@ -510,24 +465,22 @@ function animateSpinReels(finalGrid) {
 
           const dy = speed * dt;
 
-          // défilement vers le bas
           for (let i = 0; i < reel.symbols.length; i++) {
             const cellObj = reel.symbols[i];
             cellObj.container.y += dy;
             wrapCellDown(cellObj);
           }
 
-          // ✅ pop fix: prépare le résultat AVANT l’arrêt (pendant que ça bouge)
-          if (!st.prepared && p >= 0.88) {
+          // ✅ prépare le résultat plus tôt (limite les swaps de dernière milliseconde)
+          if (!st.prepared && p >= 0.84) {
             st.prepared = true;
             prepareFinalForReel(c, finalGrid);
           }
 
-          // stop reel
           if (p >= 1) {
             st.stopped = true;
 
-            // ✅ au stop: on ne change PLUS de textures, on recolle juste les positions
+            // ✅ stop: juste aligner (aucun swap texture)
             snapReelPositions(c);
 
             playSound("stop");
@@ -569,9 +522,7 @@ function animateSpinReels(finalGrid) {
   });
 }
 
-// --------------------------------------------------
-// Construction scène slot (avec mask)
-// --------------------------------------------------
+// Scene slot (mask)
 function buildSlotScene() {
   const w = app.screen.width;
   const h = app.screen.height;
@@ -602,7 +553,6 @@ function buildSlotScene() {
   slotContainer.x = Math.round((w - totalReelWidth) / 2);
   slotContainer.y = Math.round(h * 0.22);
 
-  // ✅ mask sur la zone visible (cache les buffers et les swaps)
   const mask = new PIXI.Graphics();
   mask.beginFill(0xffffff);
   mask.drawRect(0, 0, totalReelWidth, visibleHeight);
@@ -635,17 +585,15 @@ function buildSlotScene() {
 
     const reel = { container: reelContainer, symbols: [] };
 
-    // ✅ 5 symboles: 1 au-dessus, 3 visibles, 1 en dessous
     for (let i = 0; i < REEL_SYMBOLS; i++) {
       const idx = Math.floor(Math.random() * symbolTextures.length);
       const cellObj = createSymbolCell(symbolTextures[idx], symbolSize);
 
       cellObj.container.x = Math.round(symbolSize / 2);
 
-      // i=0 est au-dessus (buffer), i=1..3 visibles, i=4 en dessous (buffer)
+      // i=0 buffer haut, i=1..3 visibles, i=4 buffer bas
       const y = Math.round((i - 1) * STEP_Y + symbolSize / 2);
       cellObj.container.y = y;
-      cellObj.baseY = y;
 
       applySymbolVisual(cellObj, idx);
 
@@ -657,9 +605,7 @@ function buildSlotScene() {
   }
 }
 
-// --------------------------------------------------
-// HUD + boutons
-// --------------------------------------------------
+// HUD
 function makeText(txt, size, y, alignCenter = true) {
   const w = app.screen.width;
   const style = new PIXI.TextStyle({
@@ -799,20 +745,24 @@ function buildHUD() {
 
   const row2Y = buttonsY + buttonHeight + h * 0.025;
 
+  // speed (même largeur que SPIN)
   const speedW = buttonWidth;
   const speedH = Math.round(buttonHeight * 1.05);
-
   btnSpeed = makeSpeedButton(speedW, speedH);
   btnSpeed.x = btnSpin.x;
   btnSpeed.y = row2Y;
   setSpeedButtonText();
 
+  // info sous +1 + clamp pour pas être coupé à droite
   const infoW = buttonWidth * 0.90;
   const infoH = Math.round(buttonHeight * 0.75);
-
   btnInfo = makeButton("INFO", infoW, infoH);
-  btnInfo.x = btnPlus.x;
   btnInfo.y = row2Y;
+
+  const margin = w * 0.04;
+  const desiredX = btnPlus.x;
+  const maxX = w - infoW / 2 - margin;
+  btnInfo.x = Math.min(desiredX, maxX);
 
   btnMinus.on("pointerup", onBetMinus);
   btnPlus.on("pointerup", onBetPlus);
@@ -831,9 +781,7 @@ function updateHUDNumbers() {
   statsText.text = `Solde : ${balance}   Mise : ${bet}   Dernier gain : ${lastWin}`;
 }
 
-// --------------------------------------------------
-// Paytable overlay (auto-fit texte)
-// --------------------------------------------------
+// Paytable overlay (inchangé)
 function createPaytableOverlay() {
   const w = app.screen.width;
   const h = app.screen.height;
@@ -961,9 +909,7 @@ function togglePaytable(forceVisible) {
   else paytableOverlay.visible = !paytableOverlay.visible;
 }
 
-// --------------------------------------------------
-// Evaluation gains
-// --------------------------------------------------
+// Evaluate
 function evaluateGrid(grid, betValue) {
   let baseWin = 0;
   const winningLines = [];
@@ -1014,9 +960,7 @@ function evaluateGrid(grid, betValue) {
   return { baseWin, winningLines, bonusTriggered: bonusCount >= 3 };
 }
 
-// --------------------------------------------------
 // Highlight
-// --------------------------------------------------
 function startHighlight(cells) {
   highlightedCells.forEach((cell) => (cell.container.alpha = 1));
   highlightedCells = [];
@@ -1025,7 +969,6 @@ function startHighlight(cells) {
     const reel = reels[col];
     if (!reel) return;
 
-    // on veut le cell le plus proche de la position de la row visible
     const targetY = Math.round(SYMBOL_SIZE / 2 + row * STEP_Y);
     let best = null;
     let bestD = Infinity;
@@ -1055,9 +998,7 @@ function updateHighlight(delta) {
   }
 }
 
-// --------------------------------------------------
 // SPIN
-// --------------------------------------------------
 async function onSpinClick() {
   if (spinning) return;
   if (!app || !symbolTextures.length) return;
@@ -1067,6 +1008,11 @@ async function onSpinClick() {
   spinning = true;
   highlightedCells.forEach((cell) => (cell.container.alpha = 1));
   highlightedCells = [];
+
+  // ✅ reset locks à chaque spin
+  for (let c = 0; c < COLS; c++) {
+    reels[c]?.symbols?.forEach((cell) => (cell.locked = false));
+  }
 
   const effectiveBet = bet;
   const paidSpin = freeSpins <= 0;
@@ -1097,7 +1043,6 @@ async function onSpinClick() {
     const data = await response.json();
     const grid = data.result || data.grid || data;
 
-    // ✅ anim fluide + stop reel par reel + résultat préparé avant stop (plus de pop)
     await animateSpinReels(grid);
 
     const { baseWin, winningLines, bonusTriggered } = evaluateGrid(grid, effectiveBet);
@@ -1151,9 +1096,7 @@ function finishSpin(win, winningLines, bonusTriggered) {
   }
 }
 
-// --------------------------------------------------
 // Mise
-// --------------------------------------------------
 function onBetMinus() {
   if (spinning) return;
   if (bet > 1) {
@@ -1167,9 +1110,7 @@ function onBetPlus() {
   updateHUDNumbers();
 }
 
-// --------------------------------------------------
 // Start
-// --------------------------------------------------
 window.addEventListener("load", () => {
   try {
     initPixi();
