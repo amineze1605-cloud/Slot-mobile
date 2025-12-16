@@ -343,20 +343,19 @@ function setCellSymbol(cellObj, symbolId) {
 }
 
 // ✅ Fix swap: on prépare le résultat sur les 3 sprites qui seront visibles au stop
-function prepareFinalForReel(col, finalGrid) {
+function lockFinalVisibleCells(col, finalGrid) {
   const reel = reels[col];
   if (!reel) return;
 
   const sorted = reel.symbols.slice().sort((a, b) => a.container.y - b.container.y);
 
-  // sorted[0] = buffer haut, sorted[1..3] = visibles, sorted[4] = buffer bas
+  // sorted[1..3] = les 3 visibles
   for (let row = 0; row < ROWS; row++) {
     const cellObj = sorted[row + 1];
     if (!cellObj) continue;
 
-    cellObj.locked = true; // ✅ plus jamais random
-    const value = finalGrid[row][col];
-    setCellSymbol(cellObj, value);
+    cellObj.locked = true;
+    setCellSymbol(cellObj, finalGrid[row][col]);
   }
 }
 
