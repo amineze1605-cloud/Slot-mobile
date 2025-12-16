@@ -7,7 +7,7 @@
 // ✅ MASK FIX: mask sur app.stage (pas enfant du slotContainer) => plus d’écran vide
 // ✅ NO-SWAP (PRO): recyclage des sprites (texture change hors écran) => swap quasi invisible
 // ✅ UI: fond + glass panel (rendu plus pro)
-// ✅ FIX affichage: safe-top iPhone + panel moins haut + layout calé
+// ✅ FIX layout: retour aux positions “comme avant” (plus de safeTop qui décale tout)
 // ✅ STOP plus fluide: smoothing de vitesse (vel) + decel plus doux
 // ✅ SPIN un poil plus long
 
@@ -39,6 +39,7 @@ const PREMIUM77_ID = 0;
 // état jeu
 let balance = 1000;
 let bet = 1;
+let lastlastWin = 0;
 let lastWin = 0;
 let spinning = false;
 let freeSpins = 0;
@@ -70,12 +71,10 @@ let reelStep = 0;          // symbolSize + gap
 let visibleH = 0;
 
 // --------------------------------------------------
-// SAFE AREA (iPhone notch) – simple & efficace
+// SAFE AREA (désactivé pour retrouver le layout “comme avant”)
 // --------------------------------------------------
 function getSafeTopPx() {
-  // on prend une marge mini + un peu plus sur grands écrans
-  const h = app?.screen?.height || window.innerHeight || 800;
-  return Math.max(18, Math.round(h * 0.035)); // ~25-35px sur iPhone
+  return 0;
 }
 
 // --------------------------------------------------
@@ -85,11 +84,11 @@ const SPEEDS = [
   {
     name: "LENT",
     basePxPerMs: 0.95,
-    spinMs: 1900,           // +200
+    spinMs: 1900,
     startStaggerMs: 130,
     stopStaggerMs: 150,
     accelMs: 300,
-    preDecelMs: 360,        // decel plus longue = plus smooth
+    preDecelMs: 360,
     settleMs: 360,
     bounceMs: 260,
     bounceAmpFactor: 0.22,
@@ -97,7 +96,7 @@ const SPEEDS = [
   {
     name: "NORMAL",
     basePxPerMs: 1.20,
-    spinMs: 1550,           // +200
+    spinMs: 1550,
     startStaggerMs: 105,
     stopStaggerMs: 125,
     accelMs: 240,
@@ -109,7 +108,7 @@ const SPEEDS = [
   {
     name: "RAPIDE",
     basePxPerMs: 1.55,
-    spinMs: 1200,           // +150
+    spinMs: 1200,
     startStaggerMs: 85,
     stopStaggerMs: 100,
     accelMs: 200,
@@ -333,11 +332,10 @@ function buildGlassPanel() {
 
   if (glassPanel) { glassPanel.destroy(true); glassPanel = null; }
 
-  const safeTop = getSafeTopPx();
-
+  // ✅ décor uniquement, ne doit pas dicter le layout
   const padX = Math.round(w * 0.05);
-  const topY = safeTop + Math.round(h * 0.02);
-  const bottomPad = Math.round(h * 0.03);
+  const topY = Math.round(h * 0.06);
+  const bottomPad = Math.round(h * 0.04);
   const panelW = Math.round(w - padX * 2);
   const panelH = Math.round(h - topY - bottomPad);
   const radius = Math.round(Math.min(w, h) * 0.045);
@@ -433,6 +431,10 @@ async function initPixi() {
     buildSlotScene();
     buildHUD();
 
+    // ✅ force l'ordre des layers: bg (0), glass (1)
+    if (bgContainer) app.stage.setChildIndex(bgContainer, 0);
+    if (glassPanel) app.stage.setChildIndex(glassPanel, 1);
+
     hideMessage();
     updateHUDTexts("Appuyez sur SPIN pour lancer");
     app.ticker.add(updateHighlight);
@@ -469,6 +471,9 @@ function rebuildAll() {
     buildSlotScene();
     buildHUD();
     updateHUDTexts("Appuyez sur SPIN pour lancer");
+
+    if (bgContainer) app.stage.setChildIndex(bgContainer, 0);
+    if (glassPanel) app.stage.setChildIndex(glassPanel, 1);
   } catch (e) {
     console.error("Resize rebuild error:", e);
   }
@@ -551,8 +556,6 @@ function buildSlotScene() {
   const w = app.screen.width;
   const h = app.screen.height;
 
-  const safeTop = getSafeTopPx();
-
   const sideMargin = w * 0.08;
   const maxTotalWidth = w - sideMargin * 2;
   reelGap = 8;
@@ -571,8 +574,8 @@ function buildSlotScene() {
   slotContainer = new PIXI.Container();
   slotContainer.x = Math.round((w - totalReelWidth) / 2);
 
-  // ↙️ recalé un peu plus bas (évite l’écrasement visuel en haut)
-  slotContainer.y = safeTop + Math.round(h * 0.14);
+  // ✅ retour au layout “comme avant”
+  slotContainer.y = Math.round(h * 0.22);
 
   // Frame
   const framePaddingX = 18;
@@ -769,21 +772,21 @@ function updateSpeedButtonLabel() {
 function buildHUD() {
   const w = app.screen.width;
   const h = app.screen.height;
-  const safeTop = getSafeTopPx();
 
+  // ✅ retour au layout “comme avant”
   messageText = makeText(
     "Appuyez sur SPIN pour lancer",
     Math.round(h * 0.035),
-    safeTop + Math.round(h * 0.05)
+    Math.round(h * 0.10)
   );
 
-  statsText = makeText("", Math.round(h * 0.028), h * 0.72);
+  statsText = makeText("", Math.round(h * 0.028), Math.round(h * 0.72));
   statsText.anchor.set(0.5, 0.5);
 
   const buttonWidth = w * 0.26;
   const buttonHeight = h * 0.07;
   const spacingX = w * 0.06;
-  const buttonsY = h * 0.82;
+  const buttonsY = Math.round(h * 0.82);
 
   btnMinus = makeButton("-1", buttonWidth, buttonHeight);
   btnSpin  = makeButton("SPIN", buttonWidth, buttonHeight);
@@ -798,7 +801,7 @@ function buildHUD() {
   btnPlus.x = btnSpin.x + (buttonWidth + spacingX);
   btnPlus.y = buttonsY;
 
-  const secondY = buttonsY + buttonHeight + h * 0.02;
+  const secondY = buttonsY + buttonHeight + Math.round(h * 0.02);
 
   btnSpeed = makeSpeedButton(buttonWidth, buttonHeight * 0.90);
   btnSpeed.x = btnSpin.x;
@@ -1087,10 +1090,9 @@ function recycleReelOneStepDown(reel, nextTopId) {
 }
 
 // --------------------------------------------------
-// Smoothing helper (plus fluide que lerp fixe)
+// Smoothing helper
 // --------------------------------------------------
 function smoothFactor(dt, tauMs) {
-  // tau=120 => assez rapide, tau=160 => plus doux
   return 1 - Math.exp(-dt / Math.max(1, tauMs));
 }
 
@@ -1103,9 +1105,7 @@ function animateSpinReels(finalGrid) {
   reels.forEach((reel) => {
     reel.offset = 0;
     reel.container.y = 0;
-
     reel.vel = 0;
-
     reel.settled = false;
     reel.settleQueue = null;
     reel.settleStepsLeft = 0;
@@ -1148,7 +1148,7 @@ function animateSpinReels(finalGrid) {
         if (reel.settled) continue;
         allDone = false;
 
-        const k = smoothFactor(dt, 140); // lissage vitesse (stop plus fluide)
+        const k = smoothFactor(dt, 140);
 
         // SETTLE
         if (now >= p.settleStart) {
@@ -1187,11 +1187,9 @@ function animateSpinReels(finalGrid) {
 
           const baseNeed = remainingDist / remainingMs;
 
-          // easing: fin plus douce (ralentit mieux)
-          const ease = 0.92 - 0.22 * easeOutCubic(tSettle); // baisse progressivement
+          const ease = 0.92 - 0.22 * easeOutCubic(tSettle);
           const targetSpeed = Math.max(0.22, baseNeed * ease);
 
-          // lissage vitesse (évite “petit coup” au passage SPIN->SETTLE)
           reel.vel = reel.vel + (targetSpeed - reel.vel) * k;
 
           reel.offset += reel.vel * dt;
@@ -1227,7 +1225,6 @@ function animateSpinReels(finalGrid) {
 
         if (now >= p.preDecelStart) {
           const t = clamp01((now - p.preDecelStart) / (p.settleStart - p.preDecelStart));
-          // decel plus douce (arrive plus lisse)
           const dec = 1 - easeInOutQuad(t) * 0.72;
           target *= dec;
         }
