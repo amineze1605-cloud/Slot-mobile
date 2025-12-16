@@ -347,9 +347,13 @@ function buildSlotScene() {
   const maxTotalWidth = w - sideMargin * 2;
   const gap = 8;
 
-  const symbolFromHeight = h * 0.16;
-  const symbolFromWidth = (maxTotalWidth - gap * (COLS - 1)) / COLS;
-  const symbolSize = Math.round(Math.min(symbolFromWidth, symbolFromHeight));
+  // dans buildSlotScene()
+const symbolFromHeight = h * 0.16;
+const symbolFromWidth = (maxTotalWidth - gap * (COLS - 1)) / COLS;
+
+// ✅ ne JAMAIS dépasser la taille source (256px)
+const MAX_SYMBOL_PX = 256;
+const symbolSize = Math.min(MAX_SYMBOL_PX, Math.round(Math.min(symbolFromWidth, symbolFromHeight)));
 
   const totalReelWidth = COLS * symbolSize + gap * (COLS - 1);
 
