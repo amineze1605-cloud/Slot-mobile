@@ -4,6 +4,7 @@
 // ✅ Anti-bleeding: clamp + mipmaps off + PAD
 // ✅ VISUEL: Glow propre (copie derrière) => symboles nets, glow seulement 77/WILD/BONUS
 // ✅ INFO: texte auto-fit => plus de texte caché par le bouton
+// ✅ CAP: ne jamais upscaler au-dessus de 256px (taille source)
 
 // --------------------------------------------------
 // PIXI global settings (IMPORTANT)
@@ -156,7 +157,7 @@ function loadSpritesheet() {
 }
 
 // --------------------------------------------------
-// GlowFilters (partagés) – et surtout: resolution = renderer.resolution
+// GlowFilters (partagés) – resolution = renderer.resolution
 // --------------------------------------------------
 function buildGlowFilters() {
   const hasGlow = !!(PIXI.filters && PIXI.filters.GlowFilter);
@@ -191,6 +192,11 @@ function buildGlowFilters() {
   fWild.resolution = r;
   fBonus.resolution = r;
   fPremium.resolution = r;
+
+  // Bonus: évite que le glow soit “coupé” (selon versions)
+  fWild.padding = GLOW_PARAMS.wild.distance * 2;
+  fBonus.padding = GLOW_PARAMS.bonus.distance * 2;
+  fPremium.padding = GLOW_PARAMS.premium.distance * 2;
 
   return { wild: fWild, bonus: fBonus, premium: fPremium };
 }
@@ -299,7 +305,7 @@ function createSymbolCell(texture, symbolSize) {
   glowSprite.anchor.set(0.5);
   glowSprite.width = symbolSize;
   glowSprite.height = symbolSize;
-  glowSprite.visible = false; // activé seulement pour 77/WILD/BONUS
+  glowSprite.visible = false;
   glowSprite.roundPixels = true;
 
   // Sprite net (devant)
@@ -339,7 +345,7 @@ function applySymbolVisual(cellObj, symbolId) {
 // Construction scène slot
 // --------------------------------------------------
 function buildSlotScene() {
-  // ✅ utiliser app.screen (CSS pixels), pas renderer.width/height (retina pixels)
+  // ✅ utiliser app.screen (CSS pixels)
   const w = app.screen.width;
   const h = app.screen.height;
 
@@ -347,13 +353,15 @@ function buildSlotScene() {
   const maxTotalWidth = w - sideMargin * 2;
   const gap = 8;
 
-  // dans buildSlotScene()
-const symbolFromHeight = h * 0.16;
-const symbolFromWidth = (maxTotalWidth - gap * (COLS - 1)) / COLS;
+  const symbolFromHeight = h * 0.16;
+  const symbolFromWidth = (maxTotalWidth - gap * (COLS - 1)) / COLS;
 
-// ✅ ne JAMAIS dépasser la taille source (256px)
-const MAX_SYMBOL_PX = 256;
-const symbolSize = Math.min(MAX_SYMBOL_PX, Math.round(Math.min(symbolFromWidth, symbolFromHeight)));
+  // ✅ CAP: ne jamais dépasser la taille source (256px)
+  const MAX_SYMBOL_PX = 256;
+  const symbolSize = Math.min(
+    MAX_SYMBOL_PX,
+    Math.round(Math.min(symbolFromWidth, symbolFromHeight))
+  );
 
   const totalReelWidth = COLS * symbolSize + gap * (COLS - 1);
 
@@ -389,13 +397,12 @@ const symbolSize = Math.min(MAX_SYMBOL_PX, Math.round(Math.min(symbolFromWidth, 
     const reel = { container: reelContainer, symbols: [] };
 
     for (let r = 0; r < ROWS; r++) {
-      const idx = Math.floor(Math.random() * symbolTextures.length);
+      const idx = Math.floor(Math.random() * symbolTextures.length); // déjà safe
       const cellObj = createSymbolCell(symbolTextures[idx], symbolSize);
 
       cellObj.container.x = Math.round(symbolSize / 2);
       cellObj.container.y = Math.round(r * (symbolSize + gap) + symbolSize / 2);
 
-      // visuel selon l’ID
       applySymbolVisual(cellObj, idx);
 
       reelContainer.addChild(cellObj.container);
@@ -558,7 +565,7 @@ function createPaytableOverlay() {
   title.y = panelY + marginY;
   container.addChild(title);
 
-  // Bouton fermer d'abord (on sait où il est)
+  // Bouton fermer
   const closeHeight = Math.round(h * 0.06);
   const closeWidth = panelWidth * 0.35;
 
@@ -622,7 +629,7 @@ function createPaytableOverlay() {
   body.x = w / 2;
   body.y = title.y + title.height + marginY;
 
-  // Auto-fit: on réduit jusqu'à ce que ça rentre au-dessus du bouton
+  // Auto-fit: réduire jusqu'à ce que ça rentre au-dessus du bouton
   const maxBottom = close.y - closeHeight / 2 - marginY;
   let safety = 0;
   while (body.y + body.height > maxBottom && fontSize > 12 && safety < 25) {
@@ -658,15 +665,18 @@ function applyResultToReels(grid) {
       const reel = reels[c];
       if (!reel || !reel.symbols[r]) continue;
 
-      const tex = getTextureByIndex(value);
+      // ✅ FIX: même ID "safe" pour texture + glow
+      const safeId =
+        ((value % symbolTextures.length) + symbolTextures.length) % symbolTextures.length;
+
+      const tex = symbolTextures[safeId];
       const cellObj = reel.symbols[r];
 
-      // met à jour textures (glow + main)
       cellObj.main.texture = tex;
       cellObj.glow.texture = tex;
 
-      // visuel selon l’ID (glow uniquement sur 77/WILD/BONUS)
-      applySymbolVisual(cellObj, value);
+      // glow uniquement sur 77/WILD/BONUS
+      applySymbolVisual(cellObj, safeId);
 
       // reset alpha (au cas où highlight)
       cellObj.container.alpha = 1;
@@ -674,6 +684,7 @@ function applyResultToReels(grid) {
   }
 }
 
+// (gardé si tu veux l'utiliser ailleurs)
 function getTextureByIndex(index) {
   if (!symbolTextures.length) return PIXI.Texture.WHITE;
   const safeIndex =
