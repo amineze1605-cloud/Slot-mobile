@@ -307,6 +307,7 @@ function createSymbolCell(texture, symbolSize) {
   glowSprite.height = symbolSize;
   glowSprite.visible = false;
   glowSprite.roundPixels = true;
+  glowSprite.alpha = 0.55; // ✅ rend l'effet moins blanc / moins violent
 
   // Sprite net (devant)
   const mainSprite = new PIXI.Sprite(texture);
