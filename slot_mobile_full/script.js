@@ -70,7 +70,7 @@ const SPEEDS = [
   {
     name: "LENT",
     basePxPerMs: 0.95,
-    spinMs: 1700,
+    spinMs: 1820,
     startStaggerMs: 130,
     stopStaggerMs: 150,
     accelMs: 280,
@@ -82,7 +82,7 @@ const SPEEDS = [
   {
     name: "NORMAL",
     basePxPerMs: 1.20,
-    spinMs: 1350,
+    spinMs: 1470,
     startStaggerMs: 105,
     stopStaggerMs: 125,
     accelMs: 220,
@@ -94,7 +94,7 @@ const SPEEDS = [
   {
     name: "RAPIDE",
     basePxPerMs: 1.55,
-    spinMs: 1050,
+    spinMs: 1170,
     startStaggerMs: 85,
     stopStaggerMs: 100,
     accelMs: 180,
