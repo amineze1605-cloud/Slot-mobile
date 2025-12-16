@@ -3,12 +3,11 @@
 // ✅ FIX iPhone: autoDensity + resolution (DPR) + layout basé sur app.screen.*
 // ✅ Anti-bleeding: clamp + mipmaps off + PAD
 // ✅ VISUEL: Glow propre (copie derrière) => symboles nets, glow seulement 77/WILD/BONUS
-// ✅ INFO: texte auto-fit
+// ✅ INFO: texte auto-fit => plus de texte caché par le bouton
 // ✅ CAP: ne jamais upscaler au-dessus de 256px (taille source)
 // ✅ SPIN ANIM: reel par reel + départ doux + arrêt + bounce
-// ✅ MASK FIX: mask sur app.stage (pas enfant du slotContainer)
-// ✅ BG FIX: background plein écran (texture canvas) + étoiles (pas de panneau mal ajusté)
-// ✅ BOUNCE FIX: bounce déclenché UNE seule fois, exactement après settle (plus “trop tôt”)
+// ✅ MASK FIX: mask sur app.stage (pas enfant du slotContainer) => plus d’écran vide
+// ✅ NO-SWAP FIX: les symboles finaux "entrent" dans le flux sur les derniers pas (pas d’écrasement visible)
 
 // --------------------------------------------------
 // PIXI global settings (IMPORTANT)
@@ -64,137 +63,6 @@ let reelGap = 8;
 let reelStep = 0;          // symbolSize + gap
 let visibleH = 0;
 
-// background refs
-let bgSprite = null;
-let bgStars = null;
-
-// --------------------------------------------------
-// BACKGROUND THEMES (1 mot pour changer)
-// --------------------------------------------------
-const BG_THEME = "LUXE"; // "LUXE" | "NEON" | "TROPICAL"
-
-const BG_THEMES = {
-  LUXE: {
-    grad: ["#050814", "#070b1c", "#02040d"],
-    glows: [
-      { x: 0.50, y: 0.18, r: 0.70, color: "rgba(242,182,50,0.12)" },
-      { x: 0.20, y: 0.75, r: 0.60, color: "rgba(58,166,255,0.08)" },
-    ],
-    vignette: 0.22,
-    starAlpha: [0.05, 0.16],
-  },
-  NEON: {
-    grad: ["#07001a", "#14003a", "#02000f"],
-    glows: [
-      { x: 0.55, y: 0.22, r: 0.75, color: "rgba(212,91,255,0.14)" },
-      { x: 0.25, y: 0.70, r: 0.70, color: "rgba(58,166,255,0.12)" },
-    ],
-    vignette: 0.20,
-    starAlpha: [0.06, 0.20],
-  },
-  TROPICAL: {
-    grad: ["#00151a", "#003a2a", "#001008"],
-    glows: [
-      { x: 0.55, y: 0.20, r: 0.80, color: "rgba(43,255,90,0.12)" },
-      { x: 0.30, y: 0.80, r: 0.70, color: "rgba(242,182,50,0.08)" },
-    ],
-    vignette: 0.20,
-    starAlpha: [0.05, 0.14],
-  },
-};
-
-function destroyBgSpriteSafe(s) {
-  if (!s) return;
-  try {
-    s.destroy({ children: true, texture: true, baseTexture: true });
-  } catch (e) {
-    try { s.destroy(true); } catch (_) {}
-  }
-}
-
-function makeBackgroundTexture(w, h, themeName) {
-  const theme = BG_THEMES[themeName] || BG_THEMES.LUXE;
-
-  const c = document.createElement("canvas");
-  c.width = Math.max(2, Math.floor(w));
-  c.height = Math.max(2, Math.floor(h));
-  const ctx = c.getContext("2d");
-
-  // gradient vertical
-  const g = ctx.createLinearGradient(0, 0, 0, c.height);
-  g.addColorStop(0, theme.grad[0]);
-  g.addColorStop(0.55, theme.grad[1]);
-  g.addColorStop(1, theme.grad[2]);
-  ctx.fillStyle = g;
-  ctx.fillRect(0, 0, c.width, c.height);
-
-  // glows radiaux
-  const R = Math.max(c.width, c.height);
-  for (const glow of theme.glows || []) {
-    const rr = R * (glow.r || 0.7);
-    const rg = ctx.createRadialGradient(
-      c.width * (glow.x ?? 0.5),
-      c.height * (glow.y ?? 0.2),
-      0,
-      c.width * (glow.x ?? 0.5),
-      c.height * (glow.y ?? 0.2),
-      rr
-    );
-    rg.addColorStop(0, glow.color || "rgba(255,255,255,0.08)");
-    rg.addColorStop(1, "rgba(0,0,0,0)");
-    ctx.fillStyle = rg;
-    ctx.fillRect(0, 0, c.width, c.height);
-  }
-
-  // vignette (baked) : bords plus sombres
-  const v = ctx.createRadialGradient(
-    c.width / 2, c.height / 2, Math.min(c.width, c.height) * 0.15,
-    c.width / 2, c.height / 2, Math.max(c.width, c.height) * 0.65
-  );
-  const va = theme.vignette ?? 0.20;
-  v.addColorStop(0, `rgba(0,0,0,0)`);
-  v.addColorStop(1, `rgba(0,0,0,${va})`);
-  ctx.fillStyle = v;
-  ctx.fillRect(0, 0, c.width, c.height);
-
-  return PIXI.Texture.from(c);
-}
-
-function buildBackground() {
-  const w = app.screen.width;
-  const h = app.screen.height;
-  const theme = BG_THEMES[BG_THEME] || BG_THEMES.LUXE;
-
-  // cleanup
-  if (bgSprite) { destroyBgSpriteSafe(bgSprite); bgSprite = null; }
-  if (bgStars) { try { bgStars.destroy(true); } catch(e) {} bgStars = null; }
-
-  // BG plein écran
-  bgSprite = new PIXI.Sprite(makeBackgroundTexture(w, h, BG_THEME));
-  bgSprite.x = 0;
-  bgSprite.y = 0;
-  bgSprite.width = w;
-  bgSprite.height = h;
-  app.stage.addChild(bgSprite);
-
-  // Etoiles / poussières
-  bgStars = new PIXI.Graphics();
-  const count = Math.floor((w * h) / 26000);
-  const aMin = theme.starAlpha?.[0] ?? 0.05;
-  const aMax = theme.starAlpha?.[1] ?? 0.16;
-
-  for (let i = 0; i < count; i++) {
-    const x = Math.random() * w;
-    const y = Math.random() * h;
-    const rr = Math.random() * 1.4 + 0.4;
-    const a = Math.random() * (aMax - aMin) + aMin;
-    bgStars.beginFill(0xffffff, a);
-    bgStars.drawCircle(x, y, rr);
-    bgStars.endFill();
-  }
-  app.stage.addChild(bgStars);
-}
-
 // --------------------------------------------------
 // VITESSES (3 modes)
 // --------------------------------------------------
@@ -209,7 +77,7 @@ const SPEEDS = [
     preDecelMs: 260,
     settleMs: 320,
     bounceMs: 260,
-    bounceAmpFactor: 0.22,
+    bounceAmpFactor: 0.22, // * reelStep
   },
   {
     name: "NORMAL",
@@ -237,10 +105,10 @@ const SPEEDS = [
   },
 ];
 
-let speedIndex = 0;
+let speedIndex = 0; // 0=LENT,1=NORMAL,2=RAPIDE
 
 // --------------------------------------------------
-// VISUEL (Glow)
+// VISUEL (Glow) – tes valeurs actuelles
 // --------------------------------------------------
 const GLOW_COLORS = {
   wild: 0x2bff5a,
@@ -344,7 +212,7 @@ function loadSpritesheet() {
 }
 
 // --------------------------------------------------
-// GlowFilters
+// GlowFilters (partagés) – resolution = renderer.resolution
 // --------------------------------------------------
 function buildGlowFilters() {
   const hasGlow = !!(PIXI.filters && PIXI.filters.GlowFilter);
@@ -448,9 +316,6 @@ async function initPixi() {
 
     glowFilters = buildGlowFilters();
 
-    // ✅ IMPORTANT: background AVANT le reste (plein écran)
-    buildBackground();
-
     buildSlotScene();
     buildHUD();
 
@@ -459,12 +324,7 @@ async function initPixi() {
     app.ticker.add(updateHighlight);
 
     window.addEventListener("resize", () => {
-      // cleanup refs
       if (slotMask) { slotMask.destroy(true); slotMask = null; }
-
-      // cleanup bg
-      if (bgSprite) { destroyBgSpriteSafe(bgSprite); bgSprite = null; }
-      if (bgStars) { try { bgStars.destroy(true); } catch(e) {} bgStars = null; }
 
       app.stage.removeChildren();
       reels = [];
@@ -472,9 +332,6 @@ async function initPixi() {
       paytableOverlay = null;
 
       glowFilters = buildGlowFilters();
-
-      // rebuild
-      buildBackground();
       buildSlotScene();
       buildHUD();
       updateHUDTexts("Appuyez sur SPIN pour lancer");
@@ -487,7 +344,7 @@ async function initPixi() {
 }
 
 // --------------------------------------------------
-// Cellule symbole : glow derrière + net devant
+// Cellule symbole : glow derrière + symbole net devant
 // --------------------------------------------------
 function createSymbolCell(texture, sizePx) {
   const cell = new PIXI.Container();
@@ -539,18 +396,21 @@ function applySymbolVisual(cellObj, symbolId) {
 // --------------------------------------------------
 // Helpers symbol
 // --------------------------------------------------
+function safeId(id) {
+  const n = symbolTextures.length || 1;
+  return ((id % n) + n) % n;
+}
+
 function randomSymbolId() {
   return Math.floor(Math.random() * symbolTextures.length);
 }
 
 function setCellSymbol(cellObj, symbolId) {
-  const safeId =
-    ((symbolId % symbolTextures.length) + symbolTextures.length) % symbolTextures.length;
-
-  const tex = symbolTextures[safeId];
+  const sid = safeId(symbolId);
+  const tex = symbolTextures[sid];
   cellObj.main.texture = tex;
   cellObj.glow.texture = tex;
-  applySymbolVisual(cellObj, safeId);
+  applySymbolVisual(cellObj, sid);
 }
 
 // --------------------------------------------------
@@ -576,17 +436,18 @@ function buildSlotScene() {
   const totalReelWidth = COLS * symbolSize + reelGap * (COLS - 1);
 
   slotContainer = new PIXI.Container();
+  app.stage.addChild(slotContainer);
 
   slotContainer.x = Math.round((w - totalReelWidth) / 2);
   slotContainer.y = Math.round(h * 0.22);
 
-  // Frame (AU-DESSUS du background)
+  // Frame
   const framePaddingX = 18;
   const framePaddingY = 18;
 
   slotFrame = new PIXI.Graphics();
   slotFrame.lineStyle(6, 0xf2b632, 1);
-  slotFrame.beginFill(0x060b1a, 0.90);
+  slotFrame.beginFill(0x060b1a, 0.9);
   slotFrame.drawRoundedRect(
     slotContainer.x - framePaddingX,
     slotContainer.y - framePaddingY,
@@ -595,12 +456,9 @@ function buildSlotScene() {
     26
   );
   slotFrame.endFill();
+  app.stage.addChildAt(slotFrame, 0);
 
-  // ordre: bg -> étoiles -> frame -> slotContainer -> hud
-  app.stage.addChild(slotFrame);
-  app.stage.addChild(slotContainer);
-
-  // MASK au niveau du stage
+  // MASK (au niveau du stage)
   if (slotMask) {
     slotMask.destroy(true);
     slotMask = null;
@@ -625,7 +483,7 @@ function buildSlotScene() {
     reelContainer.x = Math.round(c * (symbolSize + reelGap));
     reelContainer.y = 0;
 
-    // 4 symboles: 1 extra top + 3 visibles
+    // 4 symboles: 1 extra en haut + 3 visibles
     const cells = [];
     for (let i = 0; i < ROWS + 1; i++) {
       const idx = randomSymbolId();
@@ -642,13 +500,14 @@ function buildSlotScene() {
 
     reels.push({
       container: reelContainer,
-      symbols: cells, // [extraTop, row0, row1, row2]
+      symbols: cells,      // [extraTop, row0, row1, row2]
       offset: 0,
       spinning: false,
       settled: false,
-      finalApplied: false,
 
-      // ✅ bounce sync
+      // ✅ settle pipeline (anti-swap)
+      settleQueue: null,
+      settleStepsLeft: 0,
       bouncing: false,
       bounceStart: 0,
     });
@@ -808,7 +667,7 @@ function buildHUD() {
   btnInfo.x = btnPlus.x;
   btnInfo.y = secondY;
 
-  // évite que INFO soit coupé
+  // évite que INFO soit coupé à droite
   const safeRight = w - w * 0.03;
   if (btnInfo.x + infoW / 2 > safeRight) {
     btnInfo.x = safeRight - infoW / 2;
@@ -837,7 +696,7 @@ function updateHUDNumbers() {
 }
 
 // --------------------------------------------------
-// Paytable overlay
+// Paytable overlay (auto-fit texte)
 // --------------------------------------------------
 function createPaytableOverlay() {
   const w = app.screen.width;
@@ -967,23 +826,18 @@ function togglePaytable(forceVisible) {
 }
 
 // --------------------------------------------------
-// Application grille backend
+// Application grille backend (sécurité finale)
 // --------------------------------------------------
 function applyResultToReels(grid) {
   if (!Array.isArray(grid) || grid.length !== ROWS) return;
 
   for (let r = 0; r < ROWS; r++) {
     for (let c = 0; c < COLS; c++) {
-      const value = grid[r][c];
       const reel = reels[c];
       if (!reel) continue;
-
-      const cellObj = reel.symbols[r + 1];
+      const cellObj = reel.symbols[r + 1]; // visible rows = [1..3]
       if (!cellObj) continue;
-
-      const safeId =
-        ((value % symbolTextures.length) + symbolTextures.length) % symbolTextures.length;
-      setCellSymbol(cellObj, safeId);
+      setCellSymbol(cellObj, safeId(grid[r][c]));
       cellObj.container.alpha = 1;
     }
   }
@@ -1083,33 +937,24 @@ function easeInOutQuad(t) {
 }
 
 // --------------------------------------------------
-// Spin anim reel-by-reel + settle + bounce (FLUIDE + SYNC)
+// Spin anim helpers
 // --------------------------------------------------
 function shiftReelOneStepDown(reel, nextTopId) {
-  const s = reel.symbols; // [extraTop, row0, row1, row2]
+  // order: [extraTop, row0, row1, row2]
+  const s = reel.symbols;
+
+  // copie du bas vers le haut
   setCellSymbol(s[3], s[2].symbolId);
   setCellSymbol(s[2], s[1].symbolId);
   setCellSymbol(s[1], s[0].symbolId);
+
+  // nouveau au-dessus (extra)
   setCellSymbol(s[0], nextTopId);
 }
 
-function setFinalColumnOnReel(reelIndex, finalGrid) {
-  const reel = reels[reelIndex];
-  if (!reel) return;
-
-  const topId = finalGrid[0][reelIndex];
-  const midId = finalGrid[1][reelIndex];
-  const botId = finalGrid[2][reelIndex];
-  const extraId = randomSymbolId();
-
-  setCellSymbol(reel.symbols[0], extraId);
-  setCellSymbol(reel.symbols[1], topId);
-  setCellSymbol(reel.symbols[2], midId);
-  setCellSymbol(reel.symbols[3], botId);
-
-  reel.finalApplied = true;
-}
-
+// --------------------------------------------------
+// Spin anim reel-by-reel + settle + bounce (NO-SWAP)
+// --------------------------------------------------
 function animateSpinReels(finalGrid) {
   const preset = SPEEDS[speedIndex];
 
@@ -1118,10 +963,12 @@ function animateSpinReels(finalGrid) {
     reel.container.y = 0;
     reel.spinning = false;
     reel.settled = false;
-    reel.finalApplied = false;
 
-    // ✅ nouveau : valeur de départ du settle (stable)
-    reel.settleFrom = 0;
+    // settle pipeline
+    reel.settleQueue = null;
+    reel.settleStepsLeft = 0;
+    reel.bouncing = false;
+    reel.bounceStart = 0;
   });
 
   const startTime = performance.now();
@@ -1136,12 +983,9 @@ function animateSpinReels(finalGrid) {
     return { startAt, stopAt, settleStart, preDecelStart };
   });
 
-  // amplitude bounce (px)
   const bounceAmp = Math.min(reelStep * preset.bounceAmpFactor, 24);
-
-  // ✅ bounce commence à la fin du settle (pas après)
-  const bounceTail = Math.min(preset.bounceMs, preset.settleMs); // sécurité
-  const bounceStartT = 1 - (bounceTail / preset.settleMs);       // ex: 0.15 avant la fin
+  const bounceTail = Math.min(preset.bounceMs, preset.settleMs);
+  const bounceStartT = 1 - (bounceTail / preset.settleMs);
 
   return new Promise((resolve) => {
     let prev = performance.now();
@@ -1164,48 +1008,91 @@ function animateSpinReels(finalGrid) {
         if (reel.settled) continue;
         allDone = false;
 
-        // ---- SETTLE (avec bounce intégré sur la fin) ----
+        // -------------------
+        // SETTLE (sans swap)
+        // -------------------
         if (now >= p.settleStart) {
-          if (!reel.finalApplied) {
-            // applique symboles finaux AVANT la pose
-            setFinalColumnOnReel(c, finalGrid);
+          const tSettle = clamp01((now - p.settleStart) / preset.settleMs);
 
-            // normalize offset dans [0..reelStep)
-            reel.offset = ((reel.offset % reelStep) + reelStep) % reelStep;
+          // 1) init de la queue finale (on fait "entrer" les symboles du résultat)
+          // Pour finir visible: [top, mid, bot]
+          // On insère: bot -> mid -> top -> (filler) via les pas du reel
+          if (!reel.settleQueue) {
+            const topId = safeId(finalGrid[0][c]);
+            const midId = safeId(finalGrid[1][c]);
+            const botId = safeId(finalGrid[2][c]);
 
-            // ✅ on fige la valeur de départ du settle pour éviter “glitch”
-            reel.settleFrom = reel.offset;
-
-            reel.finalApplied = true;
+            reel.settleQueue = [botId, midId, topId, randomSymbolId()];
+            reel.settleStepsLeft = reel.settleQueue.length;
           }
 
-          const tSettle = clamp01((now - p.settleStart) / preset.settleMs);
-          const e = easeOutCubic(tSettle);
-
-          // base: ramène l’offset à 0
-          const baseY = (1 - e) * reel.settleFrom;
-
-          // bounce seulement sur la fin du settle (donc pas de retard perçu)
-          let bounceY = 0;
-          if (tSettle >= bounceStartT) {
-            const tb = clamp01((tSettle - bounceStartT) / (1 - bounceStartT));
-            // oscillation unique, avec attaque un peu plus franche
+          // 2) si bounce en cours (intégré fin de settle)
+          if (reel.bouncing) {
+            const tb = clamp01((now - reel.bounceStart) / preset.bounceMs);
             const s = Math.sin(tb * Math.PI);
             const amp = bounceAmp * (1 - tb * 0.15);
-            bounceY = -s * amp;
+            reel.container.y = -s * amp;
+
+            if (tb >= 1) {
+              reel.container.y = 0;
+              reel.offset = 0;
+              reel.settled = true;
+            }
+            continue;
           }
 
-          reel.container.y = baseY + bounceY;
+          // 3) on doit finir EXACTEMENT sur un arrêt "au pas" (offset=0) après avoir consommé la queue
+          const settleEnd = p.settleStart + preset.settleMs;
+          const remainingMs = Math.max(1, settleEnd - now);
 
-          if (tSettle >= 1) {
-            reel.container.y = 0;
+          // distance restante (en px) jusqu'au prochain "pas" + les pas restants
+          // objectif: faire encore (stepsLeft) pas et s'arrêter sur offset=0
+          const distToNextStep = reelStep - reel.offset;
+          const remainingSteps = Math.max(0, reel.settleStepsLeft);
+          const remainingDist = distToNextStep + Math.max(0, remainingSteps - 1) * reelStep;
+
+          // vitesse "garantie" pour terminer à temps + easing
+          const baseNeed = remainingDist / remainingMs;
+          const ease = 0.85 + 0.15 * (1 - easeOutCubic(tSettle)); // un poil plus vivant au début
+          const speed = Math.max(0.30, baseNeed * ease);
+
+          reel.offset += speed * dt;
+
+          // consommation des pas (et insertion finaux)
+          while (reel.offset >= reelStep && reel.settleStepsLeft > 0) {
+            reel.offset -= reelStep;
+
+            const nextId = reel.settleQueue.length ? reel.settleQueue.shift() : randomSymbolId();
+            shiftReelOneStepDown(reel, nextId);
+
+            reel.settleStepsLeft--;
+          }
+
+          // si on a fini les pas finaux -> on stop net sur 0 + démarre bounce IMMÉDIAT
+          if (reel.settleStepsLeft <= 0) {
+            // petite sécurité: si on est extrêmement proche du prochain pas, on le consomme (évite micro-swap)
+            const EPS = 0.6;
+            if (reel.offset >= reelStep - EPS) {
+              reel.offset = 0;
+            }
+
+            // on verrouille l'arrêt
             reel.offset = 0;
-            reel.settled = true;
+            reel.container.y = 0;
+
+            // démarre le bounce sans délai
+            reel.bouncing = true;
+            reel.bounceStart = now;
+            continue;
           }
+
+          reel.container.y = reel.offset;
           continue;
         }
 
-        // ---- SPIN (scroll vers le bas) ----
+        // -------------------
+        // SPIN (scroll vers le bas)
+        // -------------------
         reel.spinning = true;
 
         let speed = preset.basePxPerMs;
@@ -1280,6 +1167,8 @@ async function onSpinClick() {
     const grid = data.result || data.grid || data;
 
     await animateSpinReels(grid);
+
+    // sécurité finale
     applyResultToReels(grid);
 
     const { baseWin, winningLines, bonusTriggered } = evaluateGrid(grid, effectiveBet);
