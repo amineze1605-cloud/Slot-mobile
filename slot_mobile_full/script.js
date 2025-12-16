@@ -1,15 +1,11 @@
 // script.js
 // Slot mobile PIXI v5 – 5x3, 5 lignes, free spins + mapping 4x4 (1024)
-// ✅ Point 1: iPhone net -> autoDensity + resolution (DPR) + FILTER_RESOLUTION
-// ✅ Point 2: layout basé sur app.screen (CSS pixels) + arrondis pour éviter flou
-// ✅ Point 3: visuel -> GlowFilter (si dispo) + shadow (si dispo) SANS perdre en qualité
+// ✅ FIX iPhone: autoDensity + resolution (DPR) + layout basé sur app.screen.*
+// ✅ Anti-bleeding: clamp + mipmaps off + PAD
+// ✅ VISUEL: GlowFilter uniquement sur 77 / WILD / BONUS (les autres: pas de glow)
 
-// --------------------------------------------------
-// PIXI global settings
-// --------------------------------------------------
 PIXI.settings.ROUND_PIXELS = true;
 PIXI.settings.MIPMAP_TEXTURES = PIXI.MIPMAP_MODES.OFF;
-// Pour symboles "smooth". Si tu préfères plus "sharp", teste NEAREST (mais ça pixelise).
 PIXI.settings.SCALE_MODE = PIXI.SCALE_MODES.LINEAR;
 
 // --------------------------------------------------
@@ -26,8 +22,9 @@ const COLS = 5;
 const ROWS = 3;
 
 // IDs symboles
-const WILD_ID = 9;
+const PREMIUM77_ID = 0;
 const BONUS_ID = 6;
+const WILD_ID = 9;
 
 // état jeu
 let balance = 1000;
@@ -43,39 +40,26 @@ let statsText;
 let btnMinus, btnPlus, btnSpin, btnInfo;
 let paytableOverlay = null;
 
-// highlight
+// highlight gagnant
 let highlightedSprites = [];
 let highlightTimer = 0;
 
 // --------------------------------------------------
-// VISUELS (Glow / Shadow)
+// VISUEL (Glow)
 // --------------------------------------------------
-const VISUALS = {
-  // glow “normal”
-  glow: { distance: 10, outerStrength: 1.3, innerStrength: 0.15, quality: 0.7 },
-  // glow “premium”
-  premium: { distance: 14, outerStrength: 2.2, innerStrength: 0.25, quality: 0.8 },
-  shadowAlpha: 0.35,
-};
+const HAS_GLOW = !!(PIXI.filters && PIXI.filters.GlowFilter);
 
+// Réglages glow (moins agressif)
 const GLOW_COLORS = {
-  default: 0xffffff,
-  wild: 0x2bff5a,
-  bonus: 0x3aa6ff,
-  premium77: 0xd45bff,
+  premium77: 0xd45bff, // violet
+  wild: 0x2bff5a,      // vert
+  bonus: 0x3aa6ff      // bleu
 };
 
-let FILTERS = {
-  ready: false,
-  hasGlow: false,
-  hasShadow: false,
-  // caches
-  glowDefault: null,
-  glowWild: null,
-  glowBonus: null,
-  glowPremium: null,
-  shadow: null,
-};
+// Instances réutilisées (important pour perf)
+let glowPremium = null;
+let glowWild = null;
+let glowBonus = null;
 
 // --------------------------------------------------
 // AUDIO
@@ -113,16 +97,16 @@ const PAYLINES = [
 ];
 
 const PAYTABLE = {
-  1:  { 3: 2, 4: 3, 5: 4 },   // pastèque
-  3:  { 3: 2, 4: 3, 5: 4 },   // pomme
-  7:  { 3: 2, 4: 3, 5: 4 },   // cerises
-  10: { 3: 2, 4: 3, 5: 4 },   // citron
-  4:  { 3: 3, 4: 4, 5: 5 },   // cartes
-  8:  { 3: 4, 4: 5, 5: 6 },   // pièce
-  5:  { 3: 10, 4: 12, 5: 14 },// couronne
-  2:  { 3: 16, 4: 18, 5: 20 },// BAR
-  11: { 3: 20, 4: 25, 5: 30 },// 7 rouge
-  0:  { 3: 30, 4: 40, 5: 50 },// 77 mauve
+  1:  { 3: 2, 4: 3, 5: 4 },    // pastèque
+  3:  { 3: 2, 4: 3, 5: 4 },    // pomme
+  7:  { 3: 2, 4: 3, 5: 4 },    // cerises
+  10: { 3: 2, 4: 3, 5: 4 },    // citron
+  4:  { 3: 3, 4: 4, 5: 5 },    // cartes
+  8:  { 3: 4, 4: 5, 5: 6 },    // pièce
+  5:  { 3: 10, 4: 12, 5: 14 }, // couronne
+  2:  { 3: 16, 4: 18, 5: 20 }, // BAR
+  11: { 3: 20, 4: 25, 5: 30 }, // 7 rouge
+  0:  { 3: 30, 4: 40, 5: 50 }, // 77 mauve
 };
 
 // --------------------------------------------------
@@ -133,14 +117,13 @@ function showMessage(text) {
   loaderEl.style.display = "flex";
   loaderEl.textContent = text;
 }
-
 function hideMessage() {
   if (!loaderEl) return;
   loaderEl.style.display = "none";
 }
 
 // --------------------------------------------------
-// Chargement spritesheet.png
+// Spritesheet loader
 // --------------------------------------------------
 function loadSpritesheet() {
   return new Promise((resolve, reject) => {
@@ -150,12 +133,9 @@ function loadSpritesheet() {
     img.onload = () => {
       try {
         const baseTexture = PIXI.BaseTexture.from(img);
-
-        // anti-bleeding + netteté
         baseTexture.mipmap = PIXI.MIPMAP_MODES.OFF;
         baseTexture.wrapMode = PIXI.WRAP_MODES.CLAMP;
         baseTexture.scaleMode = PIXI.SCALE_MODES.LINEAR;
-
         baseTexture.update();
         resolve(baseTexture);
       } catch (e) {
@@ -163,102 +143,75 @@ function loadSpritesheet() {
       }
     };
 
-    img.onerror = (e) =>
-      reject(e || new Error("Impossible de charger assets/spritesheet.png"));
+    img.onerror = (e) => reject(e || new Error("Impossible de charger assets/spritesheet.png"));
   });
 }
 
 // --------------------------------------------------
-// Setup Filters (Glow/Shadow) -> IMPORTANT: resolution = DPR
+// Filtres (crées une seule fois)
 // --------------------------------------------------
-function setupFilters(dpr) {
-  const pf = PIXI.filters || {};
-  FILTERS.hasGlow = !!pf.GlowFilter;
-  FILTERS.hasShadow = !!pf.DropShadowFilter;
+function buildVisualFilters() {
+  if (!HAS_GLOW) return;
 
-  // glow a tendance à flouter si le filtre render en res 1
-  // -> on force une résolution de filtre au niveau global
-  PIXI.settings.FILTER_RESOLUTION = dpr;
+  // glow léger (pas trop flou)
+  glowPremium = new PIXI.filters.GlowFilter({
+    distance: 12,
+    outerStrength: 1.8,
+    innerStrength: 0.25,
+    color: GLOW_COLORS.premium77,
+    quality: 0.35
+  });
 
-  // reset caches
-  FILTERS.glowDefault = null;
-  FILTERS.glowWild = null;
-  FILTERS.glowBonus = null;
-  FILTERS.glowPremium = null;
-  FILTERS.shadow = null;
+  glowWild = new PIXI.filters.GlowFilter({
+    distance: 10,
+    outerStrength: 1.35,
+    innerStrength: 0.2,
+    color: GLOW_COLORS.wild,
+    quality: 0.30
+  });
 
-  if (FILTERS.hasGlow) {
-    const Glow = pf.GlowFilter;
-
-    const makeGlow = (color, preset) => {
-      const f = new Glow({
-        distance: preset.distance,
-        outerStrength: preset.outerStrength,
-        innerStrength: preset.innerStrength,
-        color,
-        quality: preset.quality,
-      });
-      // encore mieux: forcer résolution/padding
-      f.resolution = dpr;
-      f.padding = Math.ceil(preset.distance * 2 + 8);
-      return f;
-    };
-
-    FILTERS.glowDefault = makeGlow(GLOW_COLORS.default, VISUALS.glow);
-    FILTERS.glowWild = makeGlow(GLOW_COLORS.wild, VISUALS.glow);
-    FILTERS.glowBonus = makeGlow(GLOW_COLORS.bonus, VISUALS.glow);
-    FILTERS.glowPremium = makeGlow(GLOW_COLORS.premium77, VISUALS.premium);
-  }
-
-  if (FILTERS.hasShadow) {
-    const Shadow = pf.DropShadowFilter;
-    const s = new Shadow({
-      rotation: 45,
-      distance: 6,
-      alpha: VISUALS.shadowAlpha,
-      blur: 2,
-      color: 0x000000,
-    });
-    s.resolution = dpr;
-    s.padding = 12;
-    FILTERS.shadow = s;
-  }
-
-  FILTERS.ready = true;
+  glowBonus = new PIXI.filters.GlowFilter({
+    distance: 10,
+    outerStrength: 1.35,
+    innerStrength: 0.2,
+    color: GLOW_COLORS.bonus,
+    quality: 0.30
+  });
 }
 
-function applySymbolFilters(sprite, symbolId) {
-  if (!FILTERS.ready) return;
+function applySymbolEffects(sprite, symbolId) {
+  // 🔥 Moins d'effets : glow uniquement sur 77 / WILD / BONUS
+  if (!HAS_GLOW) {
+    sprite.filters = null;
+    return;
+  }
 
-  // pas de filtre = meilleure perf
-  let glow = null;
-
-  if (symbolId === WILD_ID) glow = FILTERS.glowWild;
-  else if (symbolId === BONUS_ID) glow = FILTERS.glowBonus;
-  else if (symbolId === 0) glow = FILTERS.glowPremium; // 77 mauve premium
-  else glow = FILTERS.glowDefault; // tu peux mettre null si tu veux glow seulement sur bonus/wild
-
-  const f = [];
-  if (FILTERS.shadow) f.push(FILTERS.shadow);
-  if (glow) f.push(glow);
-
-  sprite.filters = f.length ? f : null;
+  if (symbolId === PREMIUM77_ID) {
+    sprite.filters = [glowPremium];
+  } else if (symbolId === WILD_ID) {
+    sprite.filters = [glowWild];
+  } else if (symbolId === BONUS_ID) {
+    sprite.filters = [glowBonus];
+  } else {
+    // aucun glow pour le reste (net + propre)
+    sprite.filters = null;
+  }
 }
 
 // --------------------------------------------------
 // Initialisation PIXI
 // --------------------------------------------------
+let _resizeBound = false;
+
 async function initPixi() {
-  if (!canvas) {
-    console.error("Canvas #game introuvable");
-    return;
-  }
+  if (!canvas) return console.error("Canvas #game introuvable");
   if (!window.PIXI) {
     console.error("PIXI introuvable");
     showMessage("Erreur JS : PIXI introuvable");
     return;
   }
 
+  // DPR (cap à 2 pour perfs)
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
 
   app = new PIXI.Application({
@@ -273,31 +226,29 @@ async function initPixi() {
 
   app.renderer.roundPixels = true;
 
-  // ✅ Point 3 (et surtout anti-flou glow sur iPhone)
-  setupFilters(dpr);
-
   showMessage("Chargement…");
 
   try {
+    buildVisualFilters();
+
     const baseTexture = await loadSpritesheet();
     const fullW = baseTexture.width;
     const fullH = baseTexture.height;
 
-    // 4x4 => 256x256
+    // Spritesheet 4x4 (1024 -> 256)
     const COLS_SHEET = 4;
     const ROWS_SHEET = 4;
     const cellW = Math.round(fullW / COLS_SHEET);
     const cellH = Math.round(fullH / ROWS_SHEET);
 
-    // mapping 12 symboles (3 lignes remplies)
+    // ordre (3 lignes remplies)
     const positions = [
-      [0, 0], [1, 0], [2, 0], [3, 0],
-      [0, 1], [1, 1], [2, 1], [3, 1],
-      [0, 2], [1, 2], [2, 2], [3, 2],
+      [0, 0],[1, 0],[2, 0],[3, 0],
+      [0, 1],[1, 1],[2, 1],[3, 1],
+      [0, 2],[1, 2],[2, 2],[3, 2],
     ];
 
-    // PAD: 0 si tes symboles ont déjà du “vide” autour.
-    // Mets 1 si tu vois du bleeding.
+    // PAD: 0 si chaque case a déjà du vide autour; sinon mets 1
     const PAD = 0;
 
     symbolTextures = positions.map(([c, r]) => {
@@ -318,13 +269,17 @@ async function initPixi() {
     rebuildScene();
     hideMessage();
     updateHUDTexts("Appuyez sur SPIN pour lancer");
-
     app.ticker.add(updateHighlight);
 
-    window.addEventListener("resize", () => {
-      // rebuild propre (layout en app.screen)
-      rebuildScene();
-    });
+    // Resize (une seule fois)
+    if (!_resizeBound) {
+      _resizeBound = true;
+      window.addEventListener("resize", () => {
+        if (!app) return;
+        rebuildScene();
+        updateHUDTexts("Appuyez sur SPIN pour lancer");
+      });
+    }
 
   } catch (e) {
     console.error("Erreur chargement spritesheet.png", e);
@@ -333,26 +288,21 @@ async function initPixi() {
 }
 
 function rebuildScene() {
-  if (!app) return;
-
-  // garde le fond + tout recalcul
+  // clear
   app.stage.removeChildren();
   reels = [];
   highlightedSprites = [];
-  highlightTimer = 0;
   paytableOverlay = null;
 
   buildSlotScene();
   buildHUD();
-  updateHUDNumbers();
-  updateHUDTexts("Appuyez sur SPIN pour lancer");
 }
 
 // --------------------------------------------------
 // Construction scène slot
 // --------------------------------------------------
 function buildSlotScene() {
-  // ✅ Point 2: utiliser app.screen (CSS pixels)
+  // ✅ IMPORTANT: app.screen = pixels CSS (correct sur iPhone retina)
   const w = app.screen.width;
   const h = app.screen.height;
 
@@ -362,9 +312,7 @@ function buildSlotScene() {
 
   const symbolFromHeight = h * 0.16;
   const symbolFromWidth = (maxTotalWidth - gap * (COLS - 1)) / COLS;
-
-  // arrondi pour éviter flou
-  const symbolSize = Math.max(32, Math.round(Math.min(symbolFromWidth, symbolFromHeight)));
+  const symbolSize = Math.round(Math.min(symbolFromWidth, symbolFromHeight));
 
   const totalReelWidth = COLS * symbolSize + gap * (COLS - 1);
 
@@ -398,21 +346,19 @@ function buildSlotScene() {
     const reel = { container: reelContainer, symbols: [] };
 
     for (let r = 0; r < ROWS; r++) {
-      const idx = Math.floor(Math.random() * symbolTextures.length);
-      const sprite = new PIXI.Sprite(symbolTextures[idx]);
+      const symbolId = Math.floor(Math.random() * symbolTextures.length); // 0..11
+      const sprite = new PIXI.Sprite(symbolTextures[symbolId]);
 
       sprite.roundPixels = true;
       sprite.anchor.set(0.5);
-
-      // IMPORTANT: width/height = symbolSize (ok si tes cases 256 sont bien “remplies”)
       sprite.width = symbolSize;
       sprite.height = symbolSize;
-
       sprite.x = Math.round(symbolSize / 2);
       sprite.y = Math.round(r * (symbolSize + gap) + symbolSize / 2);
 
-      // visuel
-      applySymbolFilters(sprite, idx);
+      // 🔥 Effets selon l'ID
+      sprite._symbolId = symbolId;
+      applySymbolEffects(sprite, symbolId);
 
       reelContainer.addChild(sprite);
       reel.symbols.push(sprite);
@@ -435,6 +381,7 @@ function makeText(txt, size, y, alignCenter = true) {
     wordWrapWidth: w * 0.9,
     align: alignCenter ? "center" : "left",
   });
+
   const t = new PIXI.Text(txt, style);
   if (alignCenter) {
     t.anchor.set(0.5, 0.5);
@@ -495,8 +442,8 @@ function buildHUD() {
   const buttonsY = h * 0.82;
 
   btnMinus = makeButton("-1", buttonWidth, buttonHeight);
-  btnSpin = makeButton("SPIN", buttonWidth, buttonHeight);
-  btnPlus = makeButton("+1", buttonWidth, buttonHeight);
+  btnSpin  = makeButton("SPIN", buttonWidth, buttonHeight);
+  btnPlus  = makeButton("+1", buttonWidth, buttonHeight);
 
   btnSpin.x = w / 2;
   btnSpin.y = buttonsY;
@@ -524,7 +471,6 @@ function buildHUD() {
 function updateHUDTexts(msg) {
   if (messageText) messageText.text = msg;
 }
-
 function updateHUDNumbers() {
   if (!statsText) return;
   statsText.text = `Solde : ${balance}   Mise : ${bet}   Dernier gain : ${lastWin}`;
@@ -562,14 +508,11 @@ function createPaytableOverlay() {
   panel.interactive = true;
   container.addChild(panel);
 
-  const title = new PIXI.Text(
-    "Table des gains",
-    new PIXI.TextStyle({
-      fontFamily: "system-ui",
-      fontSize: Math.round(h * 0.035),
-      fill: 0xffffff,
-    })
-  );
+  const title = new PIXI.Text("Table des gains", new PIXI.TextStyle({
+    fontFamily: "system-ui",
+    fontSize: Math.round(h * 0.035),
+    fill: 0xffffff,
+  }));
   title.anchor.set(0.5, 0);
   title.x = w / 2;
   title.y = panelY + marginY;
@@ -589,17 +532,14 @@ function createPaytableOverlay() {
     "WILD : remplace tout sauf BONUS\n" +
     "BONUS : 3+ déclenchent 10 free spins (gains ×2)";
 
-  const body = new PIXI.Text(
-    bodyText,
-    new PIXI.TextStyle({
-      fontFamily: "system-ui",
-      fontSize: Math.round(h * 0.026),
-      fill: 0xffffff,
-      wordWrap: true,
-      wordWrapWidth: panelWidth * 0.8,
-      lineHeight: Math.round(h * 0.031),
-    })
-  );
+  const body = new PIXI.Text(bodyText, new PIXI.TextStyle({
+    fontFamily: "system-ui",
+    fontSize: Math.round(h * 0.026),
+    fill: 0xffffff,
+    wordWrap: true,
+    wordWrapWidth: panelWidth * 0.8,
+    lineHeight: Math.round(h * 0.031),
+  }));
   body.anchor.set(0.5, 0);
   body.x = w / 2;
   body.y = title.y + title.height + marginY;
@@ -615,14 +555,11 @@ function createPaytableOverlay() {
   cg.drawRoundedRect(-closeWidth / 2, -closeHeight / 2, closeWidth, closeHeight, 16);
   cg.endFill();
 
-  const closeText = new PIXI.Text(
-    "FERMER",
-    new PIXI.TextStyle({
-      fontFamily: "system-ui",
-      fontSize: Math.round(h * 0.025),
-      fill: 0xffffff,
-    })
-  );
+  const closeText = new PIXI.Text("FERMER", new PIXI.TextStyle({
+    fontFamily: "system-ui",
+    fontSize: Math.round(h * 0.025),
+    fill: 0xffffff,
+  }));
   closeText.anchor.set(0.5);
 
   close.addChild(cg, closeText);
@@ -661,9 +598,10 @@ function applyResultToReels(grid) {
 
       const sprite = reel.symbols[r];
       sprite.texture = getTextureByIndex(value);
+      sprite._symbolId = value;
 
-      // ✅ Point 3: re-applique le glow selon l’ID
-      applySymbolFilters(sprite, value);
+      // 🔥 update effets selon le symbole
+      applySymbolEffects(sprite, value);
     }
   }
 }
@@ -708,6 +646,7 @@ function evaluateGrid(grid, betValue) {
     for (let i = 0; i < coords.length; i++) {
       const [col, row] = coords[i];
       const sym = grid[row][col];
+
       if (sym === BONUS_ID) break;
       if (sym === base || sym === WILD_ID) { count++; cells.push([col, row]); }
       else break;
@@ -727,7 +666,7 @@ function evaluateGrid(grid, betValue) {
 }
 
 // --------------------------------------------------
-// Highlight
+// Highlight gagnant
 // --------------------------------------------------
 function startHighlight(cells) {
   highlightedSprites.forEach((s) => (s.alpha = 1));
@@ -818,6 +757,7 @@ async function onSpinClick() {
 
       finishSpin(totalWin, winningLines, bonusTriggered);
     }, 400);
+
   } catch (err) {
     console.error("Erreur API /spin", err);
     updateHUDTexts("Erreur API");
@@ -861,7 +801,6 @@ function onBetMinus() {
     updateHUDNumbers();
   }
 }
-
 function onBetPlus() {
   if (spinning) return;
   bet += 1;
