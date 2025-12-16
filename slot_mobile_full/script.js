@@ -7,6 +7,7 @@
 // ✅ CAP: ne jamais upscaler au-dessus de 256px (taille source)
 // ✅ SPIN ANIM: reel par reel + départ doux + arrêt + bounce
 // ✅ MASK FIX: mask sur app.stage (pas enfant du slotContainer) => plus d’écran vide
+// ✅ BOUNCE SYNC: bounce géré dans la boucle principale (plus de décalage)
 
 // --------------------------------------------------
 // PIXI global settings (IMPORTANT)
@@ -323,7 +324,6 @@ async function initPixi() {
     app.ticker.add(updateHighlight);
 
     window.addEventListener("resize", () => {
-      // cleanup refs
       if (slotMask) { slotMask.destroy(true); slotMask = null; }
 
       app.stage.removeChildren();
@@ -506,6 +506,10 @@ function buildSlotScene() {
       spinning: false,
       settled: false,
       finalApplied: false,
+
+      // ✅ NEW (bounce sync)
+      bouncing: false,
+      bounceStart: 0,
     });
   }
 }
@@ -942,10 +946,8 @@ function easeInOutQuad(t) {
 // Spin anim reel-by-reel + settle + bounce (fluide)
 // --------------------------------------------------
 function shiftReelOneStepDown(reel, nextTopId) {
-  // on décale textures: bottom <= middle <= top <= extraTop, et extraTop reçoit nextTopId
   // order symbols: [extraTop, row0, row1, row2]
   const s = reel.symbols;
-  // du bas vers le haut
   setCellSymbol(s[3], s[2].symbolId);
   setCellSymbol(s[2], s[1].symbolId);
   setCellSymbol(s[1], s[0].symbolId);
@@ -956,12 +958,10 @@ function setFinalColumnOnReel(reelIndex, finalGrid) {
   const reel = reels[reelIndex];
   if (!reel) return;
 
-  // visible rows: symbols[1..3] = grid[0..2][reelIndex]
   const topId = finalGrid[0][reelIndex];
   const midId = finalGrid[1][reelIndex];
   const botId = finalGrid[2][reelIndex];
 
-  // extra top: random (ou tu peux mettre un symbole cohérent)
   const extraId = randomSymbolId();
 
   setCellSymbol(reel.symbols[0], extraId);
@@ -972,21 +972,23 @@ function setFinalColumnOnReel(reelIndex, finalGrid) {
   reel.finalApplied = true;
 }
 
+// ✅ VERSION CORRIGÉE: bounce sync DANS tick()
 function animateSpinReels(finalGrid) {
   const preset = SPEEDS[speedIndex];
 
-  // reset reel states
   reels.forEach((reel) => {
     reel.offset = 0;
     reel.container.y = 0;
     reel.spinning = false;
     reel.settled = false;
     reel.finalApplied = false;
+
+    reel.bouncing = false;
+    reel.bounceStart = 0;
   });
 
   const startTime = performance.now();
 
-  // planning par reel
   const plan = reels.map((_, c) => {
     const startAt = startTime + c * preset.startStaggerMs;
     const stopAt  = startAt + preset.spinMs + c * preset.stopStaggerMs;
@@ -997,8 +999,7 @@ function animateSpinReels(finalGrid) {
     return { startAt, stopAt, settleStart, preDecelStart };
   });
 
-  // bounce amplitude (px)
-  const bounceAmp = Math.min(reelStep * preset.bounceAmpFactor, 22);
+  const bounceAmp = Math.min(reelStep * preset.bounceAmpFactor, 24);
 
   return new Promise((resolve) => {
     let prev = performance.now();
@@ -1013,84 +1014,78 @@ function animateSpinReels(finalGrid) {
         const reel = reels[c];
         const p = plan[c];
 
+        if (reel.settled) continue;
+
+        // reel pas encore démarré
         if (now < p.startAt) {
           allDone = false;
           continue;
         }
 
-        // settle/bounce terminé ?
-        if (reel.settled) continue;
-
         allDone = false;
 
-        // --- SETTLE PHASE (final symbols, offset -> 0, then bounce)
+        // ----------------------------
+        // BOUNCE PHASE (sync)
+        // ----------------------------
+        if (reel.bouncing) {
+          const tb = clamp01((now - reel.bounceStart) / preset.bounceMs);
+
+          const s = Math.sin(tb * Math.PI);
+          const amp = bounceAmp * (1 - tb * 0.18);
+
+          reel.container.y = -s * amp;
+
+          if (tb >= 1) {
+            reel.container.y = 0;
+            reel.offset = 0;
+            reel.bouncing = false;
+            reel.settled = true;
+          }
+          continue;
+        }
+
+        // ----------------------------
+        // SETTLE PHASE (final -> offset 0 -> bounce)
+        // ----------------------------
         if (now >= p.settleStart) {
           if (!reel.finalApplied) {
-            // IMPORTANT: on applique les symboles FINALS avant l'arrêt => pas de swap visible
             setFinalColumnOnReel(c, finalGrid);
-
-            // normalize offset dans [0..reelStep)
             reel.offset = ((reel.offset % reelStep) + reelStep) % reelStep;
           }
 
           const tSettle = clamp01((now - p.settleStart) / preset.settleMs);
           const e = easeOutCubic(tSettle);
 
-          // On ramène l'offset vers 0 (comme si le reel se "pose")
-          // offset descend progressivement à 0
           reel.offset = (1 - e) * reel.offset;
           reel.container.y = reel.offset;
 
-          // Bounce en toute fin
           if (tSettle >= 1) {
-            // bounce: petit overshoot haut puis retour (fluide)
-            const bStart = now;
-            const startY = 0;
-
-            function bounceTick(tNow) {
-              const tb = clamp01((tNow - bStart) / preset.bounceMs);
-              // courbe: monte puis redescend (sinus amorti léger)
-              const s = Math.sin(tb * Math.PI);
-              const amp = bounceAmp * (1 - tb * 0.15);
-              reel.container.y = startY - s * amp;
-
-              if (tb >= 1) {
-                reel.container.y = 0;
-                reel.offset = 0;
-                reel.settled = true;
-                // petit stop sonore par reel (optionnel)
-                // playSound("stop");
-                return;
-              }
-              requestAnimationFrame(bounceTick);
-            }
-            requestAnimationFrame(bounceTick);
+            reel.offset = 0;
+            reel.container.y = 0;
+            reel.bouncing = true;
+            reel.bounceStart = now;
           }
-
           continue;
         }
 
-        // --- SPIN PHASE (scroll vers le bas)
+        // ----------------------------
+        // SPIN PHASE (scroll down)
+        // ----------------------------
         reel.spinning = true;
 
-        // speed ramp-up (accel)
         let speed = preset.basePxPerMs;
 
         const tAccel = clamp01((now - p.startAt) / preset.accelMs);
         speed *= easeInOutQuad(tAccel);
 
-        // pre-decel (avant settle)
         if (now >= p.preDecelStart) {
           const t = clamp01((now - p.preDecelStart) / (p.settleStart - p.preDecelStart));
-          // descend vers ~35% pour préparer le settle
           const dec = 1 - easeOutCubic(t) * 0.65;
           speed *= dec;
         }
 
-        // avance offset
         reel.offset += speed * dt;
 
-        // quand on passe un "pas", on shift les textures (illusion d'un reel qui défile)
         while (reel.offset >= reelStep) {
           reel.offset -= reelStep;
           shiftReelOneStepDown(reel, randomSymbolId());
@@ -1103,7 +1098,6 @@ function animateSpinReels(finalGrid) {
         resolve();
         return;
       }
-
       requestAnimationFrame(tick);
     }
 
@@ -1153,10 +1147,9 @@ async function onSpinClick() {
     const data = await response.json();
     const grid = data.result || data.grid || data;
 
-    // ✅ anim reels + arrêt reel-by-reel + bounce + finals appliqués avant arrêt
     await animateSpinReels(grid);
 
-    // (sécurité) applique résultat final (normalement déjà ok)
+    // (sécurité) applique résultat final
     applyResultToReels(grid);
 
     const { baseWin, winningLines, bonusTriggered } = evaluateGrid(grid, effectiveBet);
