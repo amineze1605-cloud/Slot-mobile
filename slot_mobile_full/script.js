@@ -7,8 +7,9 @@
 // ✅ CAP: ne jamais upscaler au-dessus de 256px (taille source)
 // ✅ SPIN ANIM: reel par reel + départ doux + arrêt + bounce
 // ✅ MASK FIX: mask sur app.stage (pas enfant du slotContainer) => plus d’écran vide
-// ✅ NO-SWAP FIX: les symboles finaux "entrent" dans le flux sur les derniers pas (pas d’écrasement visible)
+// ✅ NO-SWAP+ : lock + fade safety (swap encore moins perceptible)
 // ✅ BACKGROUND: fond dégradé + étoiles + vignette (rebuild safe au resize)
+// ✅ UI PRO: glass panel + cadre plus premium
 
 // --------------------------------------------------
 // PIXI global settings (IMPORTANT)
@@ -56,6 +57,7 @@ let highlightTimer = 0;
 // slot refs
 let slotContainer = null;
 let slotFrame = null;
+let slotFrameShadow = null;
 let slotMask = null;
 
 // layout reel
@@ -64,14 +66,19 @@ let reelGap = 8;
 let reelStep = 0;          // symbolSize + gap
 let visibleH = 0;
 
-// --------------------------------------------------
-// BACKGROUND refs
-// --------------------------------------------------
+// background refs
 let bgContainer = null;
 let bgSprite = null;
 let vignetteSprite = null;
 let stars = [];
 let bgTickerAdded = false;
+
+// UI panel refs
+let uiPanel = null;
+
+// “soft fix fade” (sécurité anti-pop)
+let softFades = [];
+let softFadeTickerAdded = false;
 
 // --------------------------------------------------
 // VITESSES (3 modes)
@@ -86,6 +93,7 @@ const SPEEDS = [
     accelMs: 280,
     preDecelMs: 260,
     settleMs: 320,
+    lockMs: 80,      // ✅ nouveau: micro “lock” avant bounce
     bounceMs: 260,
     bounceAmpFactor: 0.22, // * reelStep
   },
@@ -98,6 +106,7 @@ const SPEEDS = [
     accelMs: 220,
     preDecelMs: 220,
     settleMs: 280,
+    lockMs: 70,
     bounceMs: 240,
     bounceAmpFactor: 0.20,
   },
@@ -110,6 +119,7 @@ const SPEEDS = [
     accelMs: 180,
     preDecelMs: 180,
     settleMs: 240,
+    lockMs: 60,
     bounceMs: 220,
     bounceAmpFactor: 0.18,
   },
@@ -118,7 +128,7 @@ const SPEEDS = [
 let speedIndex = 0; // 0=LENT,1=NORMAL,2=RAPIDE
 
 // --------------------------------------------------
-// VISUEL (Glow) – tes valeurs actuelles
+// VISUEL (Glow)
 // --------------------------------------------------
 const GLOW_COLORS = {
   wild: 0x2bff5a,
@@ -183,7 +193,7 @@ const PAYTABLE = {
 };
 
 // --------------------------------------------------
-// Helpers UI
+// Helpers UI loader
 // --------------------------------------------------
 function showMessage(text) {
   if (!loaderEl) return;
@@ -201,7 +211,7 @@ function hideMessage() {
 function loadSpritesheet() {
   return new Promise((resolve, reject) => {
     const img = new Image();
-    img.src = "assets/spritesheet.png?v=5";
+    img.src = "assets/spritesheet.png?v=6";
 
     img.onload = () => {
       try {
@@ -285,7 +295,7 @@ function makeGradientTexture(w, h) {
   const img = ctx.getImageData(0, 0, c.width, c.height);
   const d = img.data;
   for (let i = 0; i < d.length; i += 4) {
-    const n = (Math.random() * 14) | 0;
+    const n = (Math.random() * 12) | 0;
     d[i] = Math.min(255, d[i] + n);
     d[i + 1] = Math.min(255, d[i + 1] + n);
     d[i + 2] = Math.min(255, d[i + 2] + n);
@@ -307,8 +317,8 @@ function makeVignetteTexture(w, h) {
 
   const g = ctx.createRadialGradient(cx, cy, r * 0.20, cx, cy, r);
   g.addColorStop(0.0, "rgba(0,0,0,0)");
-  g.addColorStop(0.6, "rgba(0,0,0,0.10)");
-  g.addColorStop(1.0, "rgba(0,0,0,0.55)");
+  g.addColorStop(0.6, "rgba(0,0,0,0.12)");
+  g.addColorStop(1.0, "rgba(0,0,0,0.60)");
 
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, c.width, c.height);
@@ -317,19 +327,14 @@ function makeVignetteTexture(w, h) {
 }
 
 function destroyBgTextures() {
-  try {
-    if (bgSprite?.texture) bgSprite.texture.destroy(true);
-  } catch (e) {}
-  try {
-    if (vignetteSprite?.texture) vignetteSprite.texture.destroy(true);
-  } catch (e) {}
+  try { if (bgSprite?.texture) bgSprite.texture.destroy(true); } catch (e) {}
+  try { if (vignetteSprite?.texture) vignetteSprite.texture.destroy(true); } catch (e) {}
 }
 
 function buildBackground() {
   const w = app.screen.width;
   const h = app.screen.height;
 
-  // cleanup si rebuild (resize)
   if (bgContainer) {
     destroyBgTextures();
     try { bgContainer.destroy({ children: true }); } catch (e) {}
@@ -338,7 +343,7 @@ function buildBackground() {
   }
 
   bgContainer = new PIXI.Container();
-  app.stage.addChildAt(bgContainer, 0); // ✅ TOUJOURS le fond en index 0
+  app.stage.addChildAt(bgContainer, 0);
 
   bgSprite = new PIXI.Sprite(makeGradientTexture(w, h));
   bgSprite.width = w;
@@ -393,6 +398,25 @@ function updateBackground(delta) {
     s.ph += s.tw * delta;
     s.g.alpha = 0.22 + (Math.sin(s.ph) * 0.18 + 0.20);
   }
+}
+
+// --------------------------------------------------
+// Soft fades (si correction symbol -> pas de “pop”)
+// --------------------------------------------------
+function scheduleSoftFade(displayObj, durationMs = 90) {
+  if (!displayObj) return;
+  softFades.push({ obj: displayObj, t0: performance.now(), dur: durationMs });
+}
+
+function updateSoftFades() {
+  if (!softFades.length) return;
+  const now = performance.now();
+  softFades = softFades.filter((f) => {
+    const t = (now - f.t0) / f.dur;
+    const k = Math.max(0, Math.min(1, t));
+    f.obj.alpha = 0.15 + 0.85 * k;
+    return k < 1;
+  });
 }
 
 // --------------------------------------------------
@@ -458,9 +482,7 @@ async function initPixi() {
 
     glowFilters = buildGlowFilters();
 
-    // ✅ build fond AVANT le slot
     buildBackground();
-
     buildSlotScene();
     buildHUD();
 
@@ -468,21 +490,24 @@ async function initPixi() {
     updateHUDTexts("Appuyez sur SPIN pour lancer");
     app.ticker.add(updateHighlight);
 
+    if (!softFadeTickerAdded) {
+      app.ticker.add(updateSoftFades);
+      softFadeTickerAdded = true;
+    }
+
     window.addEventListener("resize", () => {
       if (slotMask) { slotMask.destroy(true); slotMask = null; }
 
-      // ⚠️ enlève tout (y compris le fond) => on rebuild juste après
       app.stage.removeChildren();
 
       reels = [];
       highlightedCells = [];
       paytableOverlay = null;
+      uiPanel = null;
 
       glowFilters = buildGlowFilters();
 
-      // ✅ rebuild fond
       buildBackground();
-
       buildSlotScene();
       buildHUD();
       updateHUDTexts("Appuyez sur SPIN pour lancer");
@@ -565,7 +590,7 @@ function setCellSymbol(cellObj, symbolId) {
 }
 
 // --------------------------------------------------
-// Construction scène slot + MASK (FIX STABLE)
+// Construction scène slot + MASK (FIX STABLE) + cadre premium
 // --------------------------------------------------
 function buildSlotScene() {
   const w = app.screen.width;
@@ -592,13 +617,25 @@ function buildSlotScene() {
   slotContainer.x = Math.round((w - totalReelWidth) / 2);
   slotContainer.y = Math.round(h * 0.22);
 
-  // Frame
   const framePaddingX = 18;
   const framePaddingY = 18;
 
+  // ombre douce (fake depth)
+  slotFrameShadow = new PIXI.Graphics();
+  slotFrameShadow.beginFill(0x000000, 0.28);
+  slotFrameShadow.drawRoundedRect(
+    slotContainer.x - framePaddingX + 3,
+    slotContainer.y - framePaddingY + 6,
+    totalReelWidth + framePaddingX * 2,
+    visibleH + framePaddingY * 2,
+    28
+  );
+  slotFrameShadow.endFill();
+
+  // cadre principal
   slotFrame = new PIXI.Graphics();
   slotFrame.lineStyle(6, 0xf2b632, 1);
-  slotFrame.beginFill(0x060b1a, 0.9);
+  slotFrame.beginFill(0x060b1a, 0.88);
   slotFrame.drawRoundedRect(
     slotContainer.x - framePaddingX,
     slotContainer.y - framePaddingY,
@@ -608,9 +645,22 @@ function buildSlotScene() {
   );
   slotFrame.endFill();
 
-  // ✅ fond = index 0, donc frame en index 1
-  const idx = (bgContainer && app.stage.children[0] === bgContainer) ? 1 : 0;
-  app.stage.addChildAt(slotFrame, idx);
+  // highlight fin (en haut)
+  const hl = new PIXI.Graphics();
+  hl.beginFill(0xffffff, 0.06);
+  hl.drawRoundedRect(
+    slotContainer.x - framePaddingX + 4,
+    slotContainer.y - framePaddingY + 4,
+    totalReelWidth + framePaddingX * 2 - 8,
+    Math.max(18, Math.round((visibleH + framePaddingY * 2) * 0.18)),
+    22
+  );
+  hl.endFill();
+
+  const baseIndex = (bgContainer && app.stage.children[0] === bgContainer) ? 1 : 0;
+  app.stage.addChildAt(slotFrameShadow, baseIndex);
+  app.stage.addChildAt(slotFrame, baseIndex + 1);
+  app.stage.addChildAt(hl, baseIndex + 2);
 
   // MASK (au niveau du stage)
   if (slotMask) {
@@ -637,7 +687,6 @@ function buildSlotScene() {
     reelContainer.x = Math.round(c * (symbolSize + reelGap));
     reelContainer.y = 0;
 
-    // 4 symboles: 1 extra en haut + 3 visibles
     const cells = [];
     for (let i = 0; i < ROWS + 1; i++) {
       const idx = randomSymbolId();
@@ -659,9 +708,14 @@ function buildSlotScene() {
       spinning: false,
       settled: false,
 
-      // ✅ settle pipeline (anti-swap)
       settleQueue: null,
       settleStepsLeft: 0,
+
+      // ✅ lock stage
+      locking: false,
+      lockStart: 0,
+      lockFrom: 0,
+
       bouncing: false,
       bounceStart: 0,
     });
@@ -669,8 +723,43 @@ function buildSlotScene() {
 }
 
 // --------------------------------------------------
-// HUD + boutons
+// HUD + boutons + Glass panel pro
 // --------------------------------------------------
+function buildGlassPanel() {
+  const w = app.screen.width;
+  const h = app.screen.height;
+
+  const panelW = w * 0.92;
+  const panelH = Math.min(h * 0.32, 300);
+  const panelX = (w - panelW) / 2;
+  const panelY = h - panelH - h * 0.03;
+
+  const g = new PIXI.Graphics();
+
+  // base glass
+  g.beginFill(0x0b1224, 0.55);
+  g.lineStyle(4, 0xf2b632, 0.55);
+  g.drawRoundedRect(panelX, panelY, panelW, panelH, 28);
+  g.endFill();
+
+  // inner stroke (fine)
+  g.lineStyle(2, 0xffffff, 0.10);
+  g.drawRoundedRect(panelX + 4, panelY + 4, panelW - 8, panelH - 8, 24);
+
+  // gloss top
+  g.beginFill(0xffffff, 0.06);
+  g.drawRoundedRect(panelX + 6, panelY + 6, panelW - 12, Math.max(30, panelH * 0.30), 22);
+  g.endFill();
+
+  // petite séparation pour “pro”
+  g.lineStyle(2, 0xffffff, 0.06);
+  g.moveTo(panelX + 18, panelY + panelH * 0.44);
+  g.lineTo(panelX + panelW - 18, panelY + panelH * 0.44);
+
+  app.stage.addChild(g);
+  return { g, panelX, panelY, panelW, panelH };
+}
+
 function makeText(txt, size, y, alignCenter = true) {
   const w = app.screen.width;
   const style = new PIXI.TextStyle({
@@ -697,24 +786,31 @@ function makeText(txt, size, y, alignCenter = true) {
 function makeButton(label, width, height) {
   const container = new PIXI.Container();
   const g = new PIXI.Graphics();
-  g.beginFill(0x111827);
+  g.beginFill(0x0f172a, 0.92);
   g.lineStyle(4, 0xf2b632, 1);
   g.drawRoundedRect(-width / 2, -height / 2, width, height, 18);
   g.endFill();
+
+  // petit highlight interne
+  const hl = new PIXI.Graphics();
+  hl.beginFill(0xffffff, 0.06);
+  hl.drawRoundedRect(-width / 2 + 4, -height / 2 + 4, width - 8, height * 0.42, 14);
+  hl.endFill();
 
   const style = new PIXI.TextStyle({
     fontFamily: "system-ui",
     fontSize: Math.min(height * 0.45, 28),
     fill: 0xffffff,
+    fontWeight: "700",
   });
   const t = new PIXI.Text(label, style);
   t.anchor.set(0.5);
 
-  container.addChild(g, t);
+  container.addChild(g, hl, t);
   container.interactive = true;
   container.buttonMode = true;
 
-  container.on("pointerdown", () => (g.alpha = 0.7));
+  container.on("pointerdown", () => (g.alpha = 0.75));
   container.on("pointerup", () => (g.alpha = 1.0));
   container.on("pointerupoutside", () => (g.alpha = 1.0));
 
@@ -727,10 +823,15 @@ function makeButton(label, width, height) {
 function makeSpeedButton(width, height) {
   const container = new PIXI.Container();
   const g = new PIXI.Graphics();
-  g.beginFill(0x111827);
+  g.beginFill(0x0f172a, 0.92);
   g.lineStyle(4, 0xf2b632, 1);
   g.drawRoundedRect(-width / 2, -height / 2, width, height, 18);
   g.endFill();
+
+  const hl = new PIXI.Graphics();
+  hl.beginFill(0xffffff, 0.06);
+  hl.drawRoundedRect(-width / 2 + 4, -height / 2 + 4, width - 8, height * 0.42, 14);
+  hl.endFill();
 
   const topStyle = new PIXI.TextStyle({
     fontFamily: "system-ui",
@@ -753,11 +854,11 @@ function makeSpeedButton(width, height) {
   tTop.y = -height * 0.18;
   tBottom.y = height * 0.18;
 
-  container.addChild(g, tTop, tBottom);
+  container.addChild(g, hl, tTop, tBottom);
   container.interactive = true;
   container.buttonMode = true;
 
-  container.on("pointerdown", () => (g.alpha = 0.7));
+  container.on("pointerdown", () => (g.alpha = 0.75));
   container.on("pointerup", () => (g.alpha = 1.0));
   container.on("pointerupoutside", () => (g.alpha = 1.0));
 
@@ -784,13 +885,19 @@ function buildHUD() {
     h * 0.1
   );
 
-  statsText = makeText("", Math.round(h * 0.028), h * 0.72);
+  // glass panel
+  const panel = buildGlassPanel();
+  uiPanel = panel.g;
+
+  // stats (dans le panel)
+  statsText = makeText("", Math.round(h * 0.028), panel.panelY + panel.panelH * 0.18);
   statsText.anchor.set(0.5, 0.5);
 
   const buttonWidth = w * 0.26;
   const buttonHeight = h * 0.07;
   const spacingX = w * 0.06;
-  const buttonsY = h * 0.82;
+
+  const buttonsY = panel.panelY + panel.panelH * 0.58;
 
   btnMinus = makeButton("-1", buttonWidth, buttonHeight);
   btnSpin  = makeButton("SPIN", buttonWidth, buttonHeight);
@@ -805,7 +912,7 @@ function buildHUD() {
   btnPlus.x = btnSpin.x + (buttonWidth + spacingX);
   btnPlus.y = buttonsY;
 
-  // 2e ligne: VITESSE sous SPIN + INFO sous +1
+  // 2e ligne
   const secondY = buttonsY + buttonHeight + h * 0.02;
 
   const speedW = buttonWidth;
@@ -850,7 +957,7 @@ function updateHUDNumbers() {
 }
 
 // --------------------------------------------------
-// Paytable overlay (auto-fit texte)
+// Paytable overlay (inchangé)
 // --------------------------------------------------
 function createPaytableOverlay() {
   const w = app.screen.width;
@@ -980,19 +1087,32 @@ function togglePaytable(forceVisible) {
 }
 
 // --------------------------------------------------
-// Application grille backend (sécurité finale)
+// Application grille backend (sécurité finale + fade si mismatch)
 // --------------------------------------------------
-function applyResultToReels(grid) {
+function applyResultToReels(grid, silent = true) {
   if (!Array.isArray(grid) || grid.length !== ROWS) return;
 
   for (let r = 0; r < ROWS; r++) {
     for (let c = 0; c < COLS; c++) {
       const reel = reels[c];
       if (!reel) continue;
-      const cellObj = reel.symbols[r + 1]; // visible rows = [1..3]
+      const cellObj = reel.symbols[r + 1];
       if (!cellObj) continue;
-      setCellSymbol(cellObj, safeId(grid[r][c]));
-      cellObj.container.alpha = 1;
+
+      const target = safeId(grid[r][c]);
+
+      if (cellObj.symbolId !== target) {
+        setCellSymbol(cellObj, target);
+
+        if (silent) {
+          cellObj.container.alpha = 0.15;
+          scheduleSoftFade(cellObj.container, 90);
+        } else {
+          cellObj.container.alpha = 1;
+        }
+      } else {
+        cellObj.container.alpha = 1;
+      }
     }
   }
 }
@@ -1102,7 +1222,7 @@ function shiftReelOneStepDown(reel, nextTopId) {
 }
 
 // --------------------------------------------------
-// Spin anim reel-by-reel + settle + bounce (NO-SWAP)
+// Spin anim reel-by-reel + settle + lock + bounce (NO-SWAP+)
 // --------------------------------------------------
 function animateSpinReels(finalGrid) {
   const preset = SPEEDS[speedIndex];
@@ -1112,8 +1232,14 @@ function animateSpinReels(finalGrid) {
     reel.container.y = 0;
     reel.spinning = false;
     reel.settled = false;
+
     reel.settleQueue = null;
     reel.settleStepsLeft = 0;
+
+    reel.locking = false;
+    reel.lockStart = 0;
+    reel.lockFrom = 0;
+
     reel.bouncing = false;
     reel.bounceStart = 0;
   });
@@ -1147,7 +1273,7 @@ function animateSpinReels(finalGrid) {
         if (reel.settled) continue;
         allDone = false;
 
-        // SETTLE
+        // SETTLE + LOCK + BOUNCE
         if (now >= p.settleStart) {
           const tSettle = clamp01((now - p.settleStart) / preset.settleMs);
 
@@ -1155,10 +1281,13 @@ function animateSpinReels(finalGrid) {
             const topId = safeId(finalGrid[0][c]);
             const midId = safeId(finalGrid[1][c]);
             const botId = safeId(finalGrid[2][c]);
+
+            // ✅ 4 pas : bot -> mid -> top -> filler
             reel.settleQueue = [botId, midId, topId, randomSymbolId()];
             reel.settleStepsLeft = reel.settleQueue.length;
           }
 
+          // bounce en cours
           if (reel.bouncing) {
             const tb = clamp01((now - reel.bounceStart) / preset.bounceMs);
             const s = Math.sin(tb * Math.PI);
@@ -1173,6 +1302,24 @@ function animateSpinReels(finalGrid) {
             continue;
           }
 
+          // ✅ lock en cours (évite snap)
+          if (reel.locking) {
+            const tl = clamp01((now - reel.lockStart) / preset.lockMs);
+            const k = easeOutCubic(tl);
+            reel.container.y = (1 - k) * reel.lockFrom;
+
+            if (tl >= 1) {
+              reel.container.y = 0;
+              reel.offset = 0;
+              reel.locking = false;
+
+              reel.bouncing = true;
+              reel.bounceStart = now;
+            }
+            continue;
+          }
+
+          // “finish on step”
           const settleEnd = p.settleStart + preset.settleMs;
           const remainingMs = Math.max(1, settleEnd - now);
 
@@ -1197,11 +1344,11 @@ function animateSpinReels(finalGrid) {
             const EPS = 0.6;
             if (reel.offset >= reelStep - EPS) reel.offset = 0;
 
-            reel.offset = 0;
-            reel.container.y = 0;
-
-            reel.bouncing = true;
-            reel.bounceStart = now;
+            // ✅ on ne “snap” pas: on LOCK vers 0
+            reel.locking = true;
+            reel.lockStart = now;
+            reel.lockFrom = reel.offset;
+            reel.container.y = reel.offset;
             continue;
           }
 
@@ -1284,8 +1431,8 @@ async function onSpinClick() {
 
     await animateSpinReels(grid);
 
-    // sécurité finale
-    applyResultToReels(grid);
+    // sécurité (normalement inutile si tout va bien, mais invisible si correction)
+    applyResultToReels(grid, true);
 
     const { baseWin, winningLines, bonusTriggered } = evaluateGrid(grid, effectiveBet);
 
