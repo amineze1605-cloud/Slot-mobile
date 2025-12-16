@@ -7,8 +7,7 @@
 // ✅ CAP: ne jamais upscaler au-dessus de 256px (taille source)
 // ✅ SPIN ANIM: reel par reel + départ doux + arrêt + bounce
 // ✅ MASK FIX: mask sur app.stage (pas enfant du slotContainer) => plus d’écran vide
-// ✅ PATCH SWAP: extraTop = topId au final (plus de swap au bounce)
-// ✅ PATCH BOUNCE: bounce intégré au settle (plus de décalage)
+// ✅ PATCH SWAP PRO: plus de "setFinalColumnOnReel" visible => on injecte le résultat via les 4 derniers steps
 
 // --------------------------------------------------
 // PIXI global settings (IMPORTANT)
@@ -77,8 +76,8 @@ const SPEEDS = [
     accelMs: 280,
     preDecelMs: 260,
     settleMs: 320,
-    bounceMs: 260,          // gardé mais utilisé comme “fenêtre” de bounce intégrée
-    bounceAmpFactor: 0.22,  // * reelStep
+    bounceMs: 260,
+    bounceAmpFactor: 0.22,
   },
   {
     name: "NORMAL",
@@ -106,7 +105,7 @@ const SPEEDS = [
   },
 ];
 
-let speedIndex = 0; // 0=LENT,1=NORMAL,2=RAPIDE
+let speedIndex = 0;
 
 // --------------------------------------------------
 // VISUEL (Glow)
@@ -493,21 +492,24 @@ function buildSlotScene() {
 
     reels.push({
       container: reelContainer,
-      symbols: cells,      // [extraTop, row0, row1, row2]
+      symbols: cells, // [extraTop, row0, row1, row2]
       offset: 0,
-      spinning: false,
       settled: false,
-      finalApplied: false,
 
-      // settle memory (pour bounce intégré)
+      // PATCH SWAP PRO: queue finale injectée via les steps
+      finalQueue: null,
+      finalQueueReady: false,
+
+      // settle memory
+      settling: false,
+      settleT0: 0,
       settleOffset0: 0,
-      settleInit: false,
     });
   }
 }
 
 // --------------------------------------------------
-// HUD + boutons
+// HUD + boutons (inchangé)
 // --------------------------------------------------
 function makeText(txt, size, y, alignCenter = true) {
   const w = app.screen.width;
@@ -932,67 +934,72 @@ function easeInOutQuad(t) {
 }
 
 // --------------------------------------------------
-// Spin anim
+// Spin core helpers
 // --------------------------------------------------
 function shiftReelOneStepDown(reel, nextTopId) {
-  const s = reel.symbols;
+  const s = reel.symbols; // [extraTop, row0, row1, row2]
   setCellSymbol(s[3], s[2].symbolId);
   setCellSymbol(s[2], s[1].symbolId);
   setCellSymbol(s[1], s[0].symbolId);
   setCellSymbol(s[0], nextTopId);
 }
 
-function setFinalColumnOnReel(reelIndex, finalGrid) {
-  const reel = reels[reelIndex];
-  if (!reel) return;
+function makeFinalQueueForReel(colIndex, finalGrid) {
+  // grid: [row][col] => row 0 top, 1 mid, 2 bot
+  const topId = finalGrid[0][colIndex];
+  const midId = finalGrid[1][colIndex];
+  const botId = finalGrid[2][colIndex];
 
-  const topId = finalGrid[0][reelIndex];
-  const midId = finalGrid[1][reelIndex];
-  const botId = finalGrid[2][reelIndex];
-
-  // ✅ PATCH SWAP: extraTop = topId (comme ça, si le bounce le montre, pas de "swap")
-  const extraId = topId;
-
-  setCellSymbol(reel.symbols[0], extraId);
-  setCellSymbol(reel.symbols[1], topId);
-  setCellSymbol(reel.symbols[2], midId);
-  setCellSymbol(reel.symbols[3], botId);
-
-  reel.finalApplied = true;
+  // IMPORTANT:
+  // Derniers inserts (du plus ancien au plus récent) : bot, mid, top, top
+  // => à l'arrêt : extraTop=top et visible=top/mid/bot (pas de swap)
+  return [botId, midId, topId, topId].map((v) => {
+    return ((v % symbolTextures.length) + symbolTextures.length) % symbolTextures.length;
+  });
 }
 
+function nextTopFromQueueOrRandom(reel) {
+  if (reel.finalQueue && reel.finalQueue.length > 0) {
+    return reel.finalQueue.shift();
+  }
+  return randomSymbolId();
+}
+
+// --------------------------------------------------
+// Spin anim reel-by-reel + settle + bounce intégré (sans swap)
+// --------------------------------------------------
 function animateSpinReels(finalGrid) {
   const preset = SPEEDS[speedIndex];
-
-  reels.forEach((reel) => {
-    reel.offset = 0;
-    reel.container.y = 0;
-    reel.spinning = false;
-    reel.settled = false;
-    reel.finalApplied = false;
-
-    reel.settleOffset0 = 0;
-    reel.settleInit = false;
-  });
-
   const startTime = performance.now();
 
   const plan = reels.map((_, c) => {
     const startAt = startTime + c * preset.startStaggerMs;
     const stopAt  = startAt + preset.spinMs + c * preset.stopStaggerMs;
 
-    const settleStart = stopAt - preset.settleMs;
-    const preDecelStart = settleStart - preset.preDecelMs;
+    const settleStartMin = stopAt - preset.settleMs;
+    const preDecelStart = settleStartMin - preset.preDecelMs;
 
-    return { startAt, stopAt, settleStart, preDecelStart };
+    return { startAt, stopAt, settleStartMin, preDecelStart };
   });
 
   const bounceAmp = Math.min(reelStep * preset.bounceAmpFactor, 22);
-
-  // bounce sur la fin du settle (fenêtre)
   const bounceWindow = Math.max(120, Math.min(preset.bounceMs, preset.settleMs));
-  const bounceStartFrac = clamp01(1 - bounceWindow / preset.settleMs); // ex: 0.65..0.80 selon vitesses
+  const bounceStartFrac = clamp01(1 - bounceWindow / preset.settleMs);
   const bounceFracRange = Math.max(0.12, 1 - bounceStartFrac);
+
+  // reset state
+  reels.forEach((reel) => {
+    reel.offset = 0;
+    reel.container.y = 0;
+    reel.settled = false;
+
+    reel.finalQueue = null;
+    reel.finalQueueReady = false;
+
+    reel.settling = false;
+    reel.settleT0 = 0;
+    reel.settleOffset0 = 0;
+  });
 
   return new Promise((resolve) => {
     let prev = performance.now();
@@ -1007,35 +1014,45 @@ function animateSpinReels(finalGrid) {
         const reel = reels[c];
         const p = plan[c];
 
+        if (reel.settled) continue;
+
         if (now < p.startAt) {
           allDone = false;
           continue;
         }
 
-        if (reel.settled) continue;
         allDone = false;
 
-        // --- SETTLE (avec bounce intégré)
-        if (now >= p.settleStart) {
-          if (!reel.finalApplied) {
-            setFinalColumnOnReel(c, finalGrid);
-            reel.offset = ((reel.offset % reelStep) + reelStep) % reelStep;
+        // prépare la queue finale dès preDecelStart (assez tôt)
+        if (!reel.finalQueueReady && now >= p.preDecelStart) {
+          reel.finalQueue = makeFinalQueueForReel(c, finalGrid);
+          reel.finalQueueReady = true;
+        }
 
+        // ---- SETTLE: seulement quand la queue finale est complètement passée
+        // (si la queue n'est pas vide, on continue de tourner doucement jusqu'à l'avoir injectée)
+        const canSettle = reel.finalQueueReady && reel.finalQueue && reel.finalQueue.length === 0;
+        const settleStart = p.settleStartMin; // min
+        const shouldEnterSettle = (now >= settleStart) && canSettle;
+
+        if (shouldEnterSettle) {
+          if (!reel.settling) {
+            reel.settling = true;
+            reel.settleT0 = now;
+            reel.offset = ((reel.offset % reelStep) + reelStep) % reelStep;
             reel.settleOffset0 = reel.offset;
-            reel.settleInit = true;
           }
 
-          const t = clamp01((now - p.settleStart) / preset.settleMs);
+          const t = clamp01((now - reel.settleT0) / preset.settleMs);
           const e = easeOutCubic(t);
 
-          const baseY = (1 - e) * (reel.settleInit ? reel.settleOffset0 : reel.offset);
+          const baseY = (1 - e) * reel.settleOffset0;
 
-          // bounce qui démarre AVANT la fin (pas de pause)
           let bounceY = 0;
           if (t >= bounceStartFrac) {
-            const u = clamp01((t - bounceStartFrac) / bounceFracRange); // 0..1 fin
-            const s = Math.sin(u * Math.PI);           // 0..1..0
-            const amp = bounceAmp * (1 - u * 0.18);    // amorti léger
+            const u = clamp01((t - bounceStartFrac) / bounceFracRange);
+            const s = Math.sin(u * Math.PI);
+            const amp = bounceAmp * (1 - u * 0.18);
             bounceY = -s * amp;
           }
 
@@ -1049,25 +1066,33 @@ function animateSpinReels(finalGrid) {
           continue;
         }
 
-        // --- SPIN
-        reel.spinning = true;
-
+        // ---- SPIN: scroll vers le bas
         let speed = preset.basePxPerMs;
 
+        // accel
         const tAccel = clamp01((now - p.startAt) / preset.accelMs);
         speed *= easeInOutQuad(tAccel);
 
+        // pre-decel
         if (now >= p.preDecelStart) {
-          const t = clamp01((now - p.preDecelStart) / (p.settleStart - p.preDecelStart));
+          const t = clamp01((now - p.preDecelStart) / (Math.max(1, (p.settleStartMin - p.preDecelStart))));
           const dec = 1 - easeOutCubic(t) * 0.65;
           speed *= dec;
+        }
+
+        // si on est "après settleStartMin" mais queue pas vide, on force une vitesse douce
+        // pour finir d'injecter les 4 steps finals sans jump
+        if (now >= p.settleStartMin && !(reel.finalQueueReady && reel.finalQueue && reel.finalQueue.length === 0)) {
+          speed = Math.min(speed, preset.basePxPerMs * 0.55);
+          speed = Math.max(speed, 0.45); // sécurité: avance toujours
         }
 
         reel.offset += speed * dt;
 
         while (reel.offset >= reelStep) {
           reel.offset -= reelStep;
-          shiftReelOneStepDown(reel, randomSymbolId());
+          const nextId = nextTopFromQueueOrRandom(reel);
+          shiftReelOneStepDown(reel, nextId);
         }
 
         reel.container.y = reel.offset;
