@@ -21,6 +21,9 @@ const loaderEl = document.getElementById("loader");
 let app;
 let symbolTextures = [];
 let reels = [];
+let SYMBOL_SIZE = 0;
+let GAP = 8;
+let STEP_Y = 0; // SYMBOL_SIZE + GAP
 
 const COLS = 5;
 const ROWS = 3;
