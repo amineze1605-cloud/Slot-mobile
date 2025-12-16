@@ -1,10 +1,12 @@
 // script.js
 // Slot mobile PIXI v5 – 5x3, 5 lignes, free spins + mapping 4x4 (1024)
+// ✅ Glass panel FULL SCREEN (pile écran)
+// ✅ Slot centré (layout dynamique, plus de gros vide)
+// ✅ Stats sous le slot + texte plus petit + labels fixes (seuls chiffres changent)
 // ✅ iPhone: autoDensity + resolution + SAFE-AREA réel (env safe-area-inset-*)
-// ✅ Layout PRO: positions calculées (message / slot / stats / boutons) => plus de gros trou
 // ✅ Anti-bleeding: clamp + mipmaps off
 // ✅ Glow propre (copie derrière) => symboles nets, glow seulement 77/WILD/BONUS
-// ✅ CAP: ne jamais upscaler au-dessus de 256px (taille source)
+// ✅ CAP: ne jamais upscaler au-dessus de 256px
 // ✅ MASK FIX: mask sur app.stage
 // ✅ NO-SWAP (PRO): recyclage des sprites (texture change hors écran)
 // ✅ STOP plus fluide: vel smoothing + decel plus douce
@@ -45,9 +47,14 @@ let winMultiplier = 1;
 
 // HUD
 let messageText;
-let statsText;
 let btnMinus, btnPlus, btnSpin, btnInfo, btnSpeed;
 let paytableOverlay = null;
+
+// stats séparées (labels fixes / chiffres changent)
+let statsBar = null;
+let statBalanceValue = null;
+let statBetValue = null;
+let statWinValue = null;
 
 // clignotement gagnant
 let highlightedCells = [];
@@ -103,20 +110,17 @@ function readSafeInsetPx(which /* "top"|"bottom" */) {
     return 0;
   }
 }
-
 function getSafeTopPx() {
-  // un mini fallback au cas où env() renvoie 0
   const v = readSafeInsetPx("top");
   return Math.max(v, 10);
 }
-
 function getSafeBottomPx() {
   const v = readSafeInsetPx("bottom");
   return Math.max(v, 10);
 }
 
 // --------------------------------------------------
-// VITESSES (3 modes) — + long + arrêt plus doux
+// VITESSES (3 modes)
 // --------------------------------------------------
 const SPEEDS = [
   {
@@ -156,7 +160,6 @@ const SPEEDS = [
     bounceAmpFactor: 0.18,
   },
 ];
-
 let speedIndex = 0;
 
 // --------------------------------------------------
@@ -167,13 +170,11 @@ const GLOW_COLORS = {
   bonus: 0x3aa6ff,
   premium77: 0xd45bff,
 };
-
 const GLOW_PARAMS = {
   wild:    { distance: 6, outer: 0.70, inner: 0.20, quality: 0.25 },
   bonus:   { distance: 6, outer: 0.65, inner: 0.20, quality: 0.25 },
   premium: { distance: 7, outer: 0.85, inner: 0.20, quality: 0.28 },
 };
-
 let glowFilters = null;
 
 // --------------------------------------------------
@@ -185,12 +186,10 @@ const sounds = {
   win: new Audio("assets/audio/win.mp3"),
   bonus: new Audio("assets/audio/bonus.mp3"),
 };
-
 Object.values(sounds).forEach((a) => {
   a.preload = "auto";
   a.volume = 0.7;
 });
-
 function playSound(name) {
   const s = sounds[name];
   if (!s) return;
@@ -372,43 +371,34 @@ function buildGlassPanel() {
   glassPanel._base = new PIXI.Graphics();
   glassPanel._shine = new PIXI.Graphics();
   glassPanel._gold = new PIXI.Graphics();
-
   glassPanel.addChild(glassPanel._base, glassPanel._shine, glassPanel._gold);
   app.stage.addChild(glassPanel);
 
-  // sera redessiné par layoutAll()
-  redrawGlassPanel(0, h);
+  redrawGlassPanelFullScreen(w, h);
 }
 
-function redrawGlassPanel(topY, bottomY) {
+// ✅ FULL SCREEN : pile à la taille de l’écran
+function redrawGlassPanelFullScreen(w, h) {
   if (!glassPanel) return;
 
-  const w = app.screen.width;
-  const h = app.screen.height;
-
-  const padX = Math.round(w * 0.05);
-  const panelW = Math.round(w - padX * 2);
-  const panelH = Math.max(10, Math.round(bottomY - topY));
   const radius = Math.round(Math.min(w, h) * 0.045);
-
   const base = glassPanel._base;
   const shine = glassPanel._shine;
   const gold = glassPanel._gold;
 
   base.clear();
-  base.beginFill(0x0a1026, 0.35);
-  base.lineStyle(2, 0xffffff, 0.10);
-  base.drawRoundedRect(padX, topY, panelW, panelH, radius);
+  base.beginFill(0x0a1026, 0.30);
+  base.drawRoundedRect(0, 0, w, h, radius);
   base.endFill();
 
   shine.clear();
   shine.beginFill(0xffffff, 0.05);
-  shine.drawRoundedRect(padX + 10, topY + 10, panelW - 20, Math.round(panelH * 0.18), Math.max(8, radius - 10));
+  shine.drawRoundedRect(10, 10, w - 20, Math.round(h * 0.12), Math.max(8, radius - 10));
   shine.endFill();
 
   gold.clear();
-  gold.lineStyle(2, 0xf2b632, 0.20);
-  gold.drawRoundedRect(padX + 3, topY + 3, panelW - 6, panelH - 6, Math.max(8, radius - 3));
+  gold.lineStyle(3, 0xf2b632, 0.22);
+  gold.drawRoundedRect(2, 2, w - 4, h - 4, Math.max(8, radius - 2));
 }
 
 // --------------------------------------------------
@@ -477,7 +467,6 @@ async function initPixi() {
     if (bgContainer) app.stage.setChildIndex(bgContainer, 0);
     if (glassPanel) app.stage.setChildIndex(glassPanel, 1);
 
-    // ✅ layout pro calculé (plus de trous)
     layoutAll();
 
     hideMessage();
@@ -503,6 +492,7 @@ function rebuildAll() {
     if (paytableOverlay) { paytableOverlay.destroy(true); paytableOverlay = null; }
     if (glassPanel) { glassPanel.destroy(true); glassPanel = null; }
     if (bgContainer) { bgContainer.destroy(true); bgContainer = null; }
+    if (statsBar) { statsBar.destroy(true); statsBar = null; statBalanceValue = statBetValue = statWinValue = null; }
 
     app.stage.removeChildren();
 
@@ -515,19 +505,20 @@ function rebuildAll() {
     buildGlassPanel();
     buildSlotScene();
     buildHUD();
-    updateHUDTexts("Appuyez sur SPIN pour lancer");
 
     if (bgContainer) app.stage.setChildIndex(bgContainer, 0);
     if (glassPanel) app.stage.setChildIndex(glassPanel, 1);
 
     layoutAll();
+    updateHUDTexts("Appuyez sur SPIN pour lancer");
+    updateHUDNumbers();
   } catch (e) {
     console.error("Resize rebuild error:", e);
   }
 }
 
 // --------------------------------------------------
-// Cellule symbole
+// Symbol cell
 // --------------------------------------------------
 function createSymbolCell(texture, sizePx) {
   const cell = new PIXI.Container();
@@ -576,18 +567,13 @@ function applySymbolVisual(cellObj, symbolId) {
   }
 }
 
-// --------------------------------------------------
-// Helpers symbol
-// --------------------------------------------------
 function safeId(id) {
   const n = symbolTextures.length || 1;
   return ((id % n) + n) % n;
 }
-
 function randomSymbolId() {
   return Math.floor(Math.random() * symbolTextures.length);
 }
-
 function setCellSymbol(cellObj, symbolId) {
   const sid = safeId(symbolId);
   const tex = symbolTextures[sid];
@@ -597,7 +583,7 @@ function setCellSymbol(cellObj, symbolId) {
 }
 
 // --------------------------------------------------
-// Slot: build + redraw frame
+// Slot build + frame redraw
 // --------------------------------------------------
 function drawSlotFrame() {
   if (!slotFrame || !slotContainer) return;
@@ -625,7 +611,6 @@ function buildSlotScene() {
   const maxTotalWidth = w - sideMargin * 2;
   reelGap = 8;
 
-  // taille symbole basée sur largeur + un peu sur hauteur
   const symbolFromHeight = h * 0.17;
   const symbolFromWidth = (maxTotalWidth - reelGap * (COLS - 1)) / COLS;
 
@@ -640,13 +625,12 @@ function buildSlotScene() {
 
   slotContainer = new PIXI.Container();
   slotContainer.x = Math.round((w - totalReelWidth) / 2);
-  slotContainer.y = 0; // sera posé par layoutAll()
+  slotContainer.y = 0; // posé par layoutAll()
 
   slotFrame = new PIXI.Graphics();
   app.stage.addChild(slotFrame);
   app.stage.addChild(slotContainer);
 
-  // MASK
   slotMask = new PIXI.Graphics();
   slotMask.beginFill(0xffffff, 1);
   slotMask.drawRect(0, 0, totalReelWidth, visibleH);
@@ -655,7 +639,6 @@ function buildSlotScene() {
   app.stage.addChild(slotMask);
   slotContainer.mask = slotMask;
 
-  // Reels
   reels = [];
 
   for (let c = 0; c < COLS; c++) {
@@ -664,7 +647,6 @@ function buildSlotScene() {
     reelContainer.x = Math.round(c * (symbolSize + reelGap));
     reelContainer.y = 0;
 
-    // 5 symboles: 1 extra haut + 3 visibles + 1 extra bas
     const cells = [];
     for (let i = 0; i < ROWS + 2; i++) {
       const idx = randomSymbolId();
@@ -694,26 +676,22 @@ function buildSlotScene() {
 }
 
 // --------------------------------------------------
-// HUD + boutons
+// HUD
 // --------------------------------------------------
-function makeText(txt, size, y, alignCenter = true) {
+function makeText(txt, size, y) {
   const w = app.screen.width;
   const style = new PIXI.TextStyle({
     fontFamily: "system-ui",
     fontSize: size,
     fill: 0xffffff,
     wordWrap: true,
-    wordWrapWidth: w * 0.9,
-    align: alignCenter ? "center" : "left",
+    wordWrapWidth: w * 0.92,
+    align: "center",
+    fontWeight: "700",
   });
   const t = new PIXI.Text(txt, style);
-  if (alignCenter) {
-    t.anchor.set(0.5, 0.5);
-    t.x = w / 2;
-  } else {
-    t.anchor.set(0, 0.5);
-    t.x = w * 0.05;
-  }
+  t.anchor.set(0.5, 0.5);
+  t.x = w / 2;
   t.y = y;
   app.stage.addChild(t);
   return t;
@@ -737,7 +715,7 @@ function makeButton(label, width, height) {
     fontFamily: "system-ui",
     fontSize: Math.min(height * 0.45, 28),
     fill: 0xffffff,
-    fontWeight: "700",
+    fontWeight: "800",
   });
   const t = new PIXI.Text(label, style);
   t.anchor.set(0.5);
@@ -751,8 +729,6 @@ function makeButton(label, width, height) {
   container.on("pointerupoutside", () => (g.alpha = 1.0));
 
   app.stage.addChild(container);
-  container._bg = g;
-  container._text = t;
   return container;
 }
 
@@ -774,13 +750,13 @@ function makeSpeedButton(width, height) {
     fontFamily: "system-ui",
     fontSize: Math.min(height * 0.28, 18),
     fill: 0xffffff,
-    fontWeight: "600",
+    fontWeight: "700",
   });
   const bottomStyle = new PIXI.TextStyle({
     fontFamily: "system-ui",
     fontSize: Math.min(height * 0.34, 22),
     fill: 0xffffff,
-    fontWeight: "800",
+    fontWeight: "900",
   });
 
   const tTop = new PIXI.Text("VITESSE", topStyle);
@@ -788,7 +764,6 @@ function makeSpeedButton(width, height) {
 
   tTop.anchor.set(0.5);
   tBottom.anchor.set(0.5);
-
   tTop.y = -height * 0.18;
   tBottom.y = height * 0.18;
 
@@ -800,7 +775,6 @@ function makeSpeedButton(width, height) {
   container.on("pointerup", () => (g.alpha = 1.0));
   container.on("pointerupoutside", () => (g.alpha = 1.0));
 
-  container._bg = g;
   container._tBottom = tBottom;
 
   app.stage.addChild(container);
@@ -812,24 +786,76 @@ function updateSpeedButtonLabel() {
   btnSpeed._tBottom.text = SPEEDS[speedIndex].name;
 }
 
-function buildHUD() {
+// ✅ Stats bar : labels fixes + valeurs séparées
+function buildStatsBar() {
   const w = app.screen.width;
+  const h = app.screen.height;
+
+  const fontSize = Math.max(14, Math.round(h * 0.020)); // plus petit
+  const labelStyle = new PIXI.TextStyle({
+    fontFamily: "system-ui",
+    fontSize,
+    fill: 0xffffff,
+    fontWeight: "700",
+  });
+  const valueStyle = new PIXI.TextStyle({
+    fontFamily: "system-ui",
+    fontSize,
+    fill: 0xffffff,
+    fontWeight: "900",
+  });
+
+  const bar = new PIXI.Container();
+
+  // 3 groupes (gauche / centre / droite)
+  const gx = [w * 0.18, w * 0.50, w * 0.82];
+
+  function makeGroup(label, initialValue, x) {
+    const g = new PIXI.Container();
+    g.x = Math.round(x);
+    g.y = 0;
+
+    const tLabel = new PIXI.Text(label, labelStyle);
+    tLabel.anchor.set(1, 0.5); // label aligné à droite
+    tLabel.x = 0;
+    tLabel.y = 0;
+
+    const tValue = new PIXI.Text(String(initialValue), valueStyle);
+    tValue.anchor.set(0, 0.5); // valeur part à droite, ne bouge pas le label
+    tValue.x = 8;
+    tValue.y = 0;
+
+    g.addChild(tLabel, tValue);
+    bar.addChild(g);
+
+    return tValue;
+  }
+
+  statBalanceValue = makeGroup("Solde :", balance, gx[0]);
+  statBetValue     = makeGroup("Mise :", bet, gx[1]);
+  statWinValue     = makeGroup("Gain :", lastWin, gx[2]);
+
+  bar.y = 0;
+  app.stage.addChild(bar);
+  return bar;
+}
+
+function buildHUD() {
   const h = app.screen.height;
 
   messageText = makeText(
     "Appuyez sur SPIN pour lancer",
-    Math.round(h * 0.035),
+    Math.round(h * 0.034),
     60
   );
 
-  statsText = makeText("", Math.round(h * 0.028), 0);
-  statsText.anchor.set(0.5, 0.5);
+  statsBar = buildStatsBar();
 
-  // boutons (les positions seront set dans layoutAll)
+  const w = app.screen.width;
+
   btnMinus = makeButton("-1", w * 0.26, h * 0.07);
   btnSpin  = makeButton("SPIN", w * 0.26, h * 0.07);
   btnPlus  = makeButton("+1", w * 0.26, h * 0.07);
-
   btnSpeed = makeSpeedButton(w * 0.26, (h * 0.07) * 0.90);
   btnInfo  = makeButton("INFO", (w * 0.26) * 0.90, (h * 0.07) * 0.90);
 
@@ -850,13 +876,16 @@ function buildHUD() {
 function updateHUDTexts(msg) {
   if (messageText) messageText.text = msg;
 }
+
 function updateHUDNumbers() {
-  if (!statsText) return;
-  statsText.text = `Solde : ${balance}   Mise : ${bet}   Dernier gain : ${lastWin}`;
+  // ✅ seuls les chiffres changent
+  if (statBalanceValue) statBalanceValue.text = String(balance);
+  if (statBetValue) statBetValue.text = String(bet);
+  if (statWinValue) statWinValue.text = String(lastWin);
 }
 
 // --------------------------------------------------
-// ✅ LAYOUT PRO (corrige ton “affichage pas bon”)
+// ✅ Layout (slot centré + stats sous slot)
 // --------------------------------------------------
 function layoutAll() {
   if (!app) return;
@@ -864,82 +893,82 @@ function layoutAll() {
   const w = app.screen.width;
   const h = app.screen.height;
 
+  // glass panel full screen
+  if (glassPanel) redrawGlassPanelFullScreen(w, h);
+
   const safeTop = getSafeTopPx();
   const safeBottom = getSafeBottomPx();
 
-  // tailles boutons
+  // message
+  const msgY = Math.round(safeTop + Math.max(26, h * 0.045));
+  messageText.x = w / 2;
+  messageText.y = msgY;
+
+  // boutons
   const buttonWidth = w * 0.26;
   const buttonHeight = h * 0.07;
   const spacingX = w * 0.06;
   const rowGap = Math.round(h * 0.02);
   const row2H = buttonHeight * 0.90;
 
-  // place les 2 lignes de boutons “collées au bas” (sans tomber dans la barre iOS)
   const bottomMargin = Math.max(12, safeBottom + Math.round(h * 0.02));
 
-  const row1Y = Math.round(
-    h - bottomMargin - (row2H + rowGap + buttonHeight / 2)
-  );
-  const row2Y = Math.round(row1Y + buttonHeight / 2 + rowGap + row2H / 2);
+  const row2Y = Math.round(h - bottomMargin - row2H / 2);
+  const row1Y = Math.round(row2Y - row2H / 2 - rowGap - buttonHeight / 2);
 
-  // positions boutons
-  btnSpin.x = w / 2;
-  btnSpin.y = row1Y;
+  btnSpin.x = w / 2; btnSpin.y = row1Y;
+  btnMinus.x = btnSpin.x - (buttonWidth + spacingX); btnMinus.y = row1Y;
+  btnPlus.x  = btnSpin.x + (buttonWidth + spacingX); btnPlus.y  = row1Y;
 
-  btnMinus.x = btnSpin.x - (buttonWidth + spacingX);
-  btnMinus.y = row1Y;
+  btnSpeed.x = btnSpin.x; btnSpeed.y = row2Y;
+  btnInfo.x  = btnPlus.x; btnInfo.y  = row2Y;
 
-  btnPlus.x = btnSpin.x + (buttonWidth + spacingX);
-  btnPlus.y = row1Y;
-
-  btnSpeed.x = btnSpin.x;
-  btnSpeed.y = row2Y;
-
-  btnInfo.x = btnPlus.x;
-  btnInfo.y = row2Y;
-
-  // évite INFO coupé à droite
+  // évite INFO coupé
   const infoW = buttonWidth * 0.90;
   const safeRight = w - w * 0.03;
   if (btnInfo.x + infoW / 2 > safeRight) btnInfo.x = safeRight - infoW / 2;
 
-  // stats juste au-dessus des boutons
-  const statsGap = Math.max(16, Math.round(h * 0.025));
-  const statsY = Math.round(row1Y - buttonHeight / 2 - statsGap);
-  statsText.x = w / 2;
-  statsText.y = statsY;
+  // zone utile entre message et boutons
+  const topPad = Math.max(10, Math.round(h * 0.018));
+  const bottomPad = Math.max(10, Math.round(h * 0.018));
 
-  // message en haut (safeTop)
-  const msgY = Math.round(safeTop + Math.max(22, h * 0.045));
-  messageText.x = w / 2;
-  messageText.y = msgY;
+  const availTop = Math.round(msgY + messageText.height / 2 + topPad);
+  const availBottom = Math.round(row1Y - buttonHeight / 2 - bottomPad);
 
-  // slot “entre” message et stats (plus de trou)
-  const { framePaddingY } = slotMetrics;
-  const topPad = Math.max(14, Math.round(h * 0.02));
-  const bottomPad = Math.max(14, Math.round(h * 0.02));
+  // stats sous slot
+  const gapSlotToStats = Math.max(10, Math.round(h * 0.020));
+  const statsH = statsBar ? statsBar.height : 20;
 
-  const minSlotY = Math.round(msgY + (messageText.height / 2) + topPad);
-  const maxSlotY = Math.round(statsY - bottomPad - (visibleH + framePaddingY));
+  // hauteur totale du bloc (slot frame + stats)
+  const slotFrameH = visibleH + slotMetrics.framePaddingY * 2;
+  const blockH = slotFrameH + gapSlotToStats + statsH;
 
-  // si l'écran est trop petit, on compresse un peu mais on garde propre
-  let slotY = minSlotY;
-  if (maxSlotY > minSlotY) slotY = Math.round(minSlotY + (maxSlotY - minSlotY) * 0.15);
+  // centre le bloc
+  const availH = Math.max(10, availBottom - availTop);
+  const blockTop = Math.round(availTop + Math.max(0, (availH - blockH) / 2));
 
-  slotContainer.y = slotY;
+  // slotContainer.y = top du contenu visible
+  slotContainer.y = blockTop + slotMetrics.framePaddingY;
+
+  // X slot
+  slotContainer.x = Math.round((w - slotMetrics.totalReelWidth) / 2);
+
+  // mask
   slotMask.x = slotContainer.x;
   slotMask.y = slotContainer.y;
 
+  // frame
   drawSlotFrame();
 
-  // glass panel = zone utile de haut en bas
-  const panelTop = Math.max(8, Math.round(safeTop + 8));
-  const panelBottom = Math.min(h - 8, Math.round(row2Y + row2H / 2 + bottomMargin * 0.35));
-  redrawGlassPanel(panelTop, panelBottom);
+  // stats juste sous le slot
+  if (statsBar) {
+    statsBar.x = 0; // groupes déjà en x écran
+    statsBar.y = Math.round(slotContainer.y + visibleH + gapSlotToStats + statsH / 2);
+  }
 }
 
 // --------------------------------------------------
-// Paytable overlay (comme avant)
+// Paytable overlay (identique à avant, raccourci)
 // --------------------------------------------------
 function createPaytableOverlay() {
   const w = app.screen.width;
@@ -1035,7 +1064,7 @@ function togglePaytable(forceVisible) {
 }
 
 // --------------------------------------------------
-// Helpers: cellule visible (0..2) via position Y
+// Helpers: cellule visible
 // --------------------------------------------------
 function getCellAtVisibleRow(reel, rowIndex) {
   const targetY = rowIndex * reelStep + symbolSize / 2;
@@ -1050,7 +1079,7 @@ function getCellAtVisibleRow(reel, rowIndex) {
 }
 
 // --------------------------------------------------
-// Application grille backend (sécurité finale)
+// Apply result
 // --------------------------------------------------
 function applyResultToReels(grid) {
   if (!Array.isArray(grid) || grid.length !== ROWS) return;
@@ -1070,7 +1099,7 @@ function applyResultToReels(grid) {
 }
 
 // --------------------------------------------------
-// Evaluation gains
+// Evaluate win
 // --------------------------------------------------
 function evaluateGrid(grid, betValue) {
   let baseWin = 0;
@@ -1165,7 +1194,7 @@ function easeInOutQuad(t) {
 }
 
 // --------------------------------------------------
-// NO-SWAP PRO: recyclage de sprites
+// NO-SWAP PRO
 // --------------------------------------------------
 function recycleReelOneStepDown(reel, nextTopId) {
   const s = reel.symbols;
@@ -1197,7 +1226,7 @@ function smoothFactor(dt, tauMs) {
 }
 
 // --------------------------------------------------
-// Spin anim (vel smoothing + decel douce)
+// Spin anim
 // --------------------------------------------------
 function animateSpinReels(finalGrid) {
   const preset = SPEEDS[speedIndex];
