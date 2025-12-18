@@ -117,42 +117,42 @@ function getSafeTopPx() {
 const SPEEDS = [
   {
     name: "LENT",
-    basePxPerMs: 1.20,     // ✅ un peu plus rapide
-    spinMs: 1550,
+    basePxPerMs: 1.15,
+    spinMs: 1950,          // ✅ plus long
     startStaggerMs: 105,
     stopStaggerMs: 120,
-    accelMs: 95,           // ✅ départ plus vif
-    preDecelMs: 290,
-    settleMs: 340,
+    accelMs: 95,
+    preDecelMs: 320,       // un poil plus long
+    settleMs: 360,         // un poil plus long
     snapMs: 110,
     bounceMs: 170,
-    bounceAmpFactor: 0.075 // ✅ bounce moins fort
+    bounceAmpFactor: 0.055 // ✅ bounce moins prononcé
   },
   {
     name: "NORMAL",
-    basePxPerMs: 1.55,
-    spinMs: 1250,
+    basePxPerMs: 1.45,
+    spinMs: 1600,          // ✅ plus long
     startStaggerMs: 90,
     stopStaggerMs: 105,
     accelMs: 85,
-    preDecelMs: 250,
-    settleMs: 310,
+    preDecelMs: 290,
+    settleMs: 335,
     snapMs: 100,
     bounceMs: 160,
-    bounceAmpFactor: 0.070
+    bounceAmpFactor: 0.050 // ✅ bounce moins prononcé
   },
   {
     name: "RAPIDE",
-    basePxPerMs: 1.95,
-    spinMs: 1000,
+    basePxPerMs: 1.80,
+    spinMs: 1300,          // ✅ plus long
     startStaggerMs: 75,
     stopStaggerMs: 90,
     accelMs: 75,
-    preDecelMs: 210,
-    settleMs: 280,
+    preDecelMs: 250,
+    settleMs: 305,
     snapMs: 95,
     bounceMs: 150,
-    bounceAmpFactor: 0.065
+    bounceAmpFactor: 0.045 // ✅ bounce moins prononcé
   },
 ];
 let speedIndex = 0;
