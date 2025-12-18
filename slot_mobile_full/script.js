@@ -890,9 +890,9 @@ function applyGlowForAllVisible(){
   const lastVisible=EXTRA_SYMBOLS + ROWS - 1;
   for(let c=0;c<reels.length;c++){
     const r=reels[c];
-    for(let i=firstVisible;i<=lastVisible;i++){
-      applySymbolVisual(r.symbols[i], r.symbols[i].symbolId);
-    }
+    for (let i = FIRST_VISIBLE; i <= LAST_VISIBLE; i++) {
+  applySymbolVisual(r.symbols[i], r.symbols[i].symbolId);
+}
     if (r.blur) r.container.filters = null; // blur OFF à la fin
   }
 }
