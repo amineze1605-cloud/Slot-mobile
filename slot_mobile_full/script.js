@@ -63,9 +63,9 @@ function getSafeTopPx() {
 
 // Vitesse + stop plus doux
 const SPEEDS = [
-  { name: "LENT",   basePxPerMs: 0.95, spinMs: 1850, startStaggerMs: 130, stopStaggerMs: 150, accelMs: 300, preDecelMs: 360, settleMs: 360, settleFastFactor: 0.55, bounceMs: 240, bounceAmpFactor: 0.20 },
-  { name: "NORMAL", basePxPerMs: 1.20, spinMs: 1500, startStaggerMs: 105, stopStaggerMs: 125, accelMs: 240, preDecelMs: 300, settleMs: 320, settleFastFactor: 0.55, bounceMs: 220, bounceAmpFactor: 0.18 },
-  { name: "RAPIDE", basePxPerMs: 1.55, spinMs: 1200, startStaggerMs:  85, stopStaggerMs: 100, accelMs: 200, preDecelMs: 240, settleMs: 280, settleFastFactor: 0.55, bounceMs: 200, bounceAmpFactor: 0.16 },
+  { name:"LENT",   basePxPerMs:0.95, spinMs:1850, startStaggerMs:130, stopStaggerMs:150, accelMs:220, preDecelMs:360, settleMs:360, settleFastFactor:0.55, bounceMs:220, bounceAmpFactor:0.14 },
+  { name:"NORMAL", basePxPerMs:1.20, spinMs:1500, startStaggerMs:105, stopStaggerMs:125, accelMs:190, preDecelMs:300, settleMs:320, settleFastFactor:0.55, bounceMs:200, bounceAmpFactor:0.12 },
+  { name:"RAPIDE", basePxPerMs:1.55, spinMs:1200, startStaggerMs: 85, stopStaggerMs:100, accelMs:160, preDecelMs:240, settleMs:280, settleFastFactor:0.55, bounceMs:180, bounceAmpFactor:0.10 },
 ];
 let speedIndex = 0;
 
