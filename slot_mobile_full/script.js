@@ -28,6 +28,16 @@ let reels = [];
 const COLS = 5;
 const ROWS = 3;
 
+// --------------------------------------------------
+// REELS: 7 sprites par rouleau (2 au-dessus, 3 visibles, 2 en dessous)
+// --------------------------------------------------
+const EXTRA_TOP = 2;
+const EXTRA_BOTTOM = 2;
+const REEL_SYMBOLS = ROWS + EXTRA_TOP + EXTRA_BOTTOM; // 7
+
+const FIRST_VISIBLE = EXTRA_TOP;            // 2
+const LAST_VISIBLE = EXTRA_TOP + ROWS - 1;  // 4
+
 const PREMIUM77_ID = 0;
 const BONUS_ID = 6;
 const WILD_ID = 9;
@@ -451,18 +461,19 @@ function buildSlotScene(){
 
     slotContainer.addChild(reelContainer);
 
-    // ✅ 7 symboles: i=0..6 => positions (i-2) => [-2,-1,0,1,2,3,4]
-    const cells=[];
-    for(let i=0;i<ROWS + EXTRA_SYMBOLS*2;i++){
-      const idx=randomSymbolId();
-      const cellObj=createSymbolCell(symbolTextures[idx], symbolSize);
-      setCellSymbol(cellObj, idx, true);
+    // 7 symboles: 2 extra haut + 3 visibles + 2 extra bas
+for (let i = 0; i < REEL_SYMBOLS; i++) {
+  const idx = randomSymbolId();
+  const cellObj = createSymbolCell(symbolTextures[idx], symbolSize);
+  setCellSymbol(cellObj, idx, true);
 
-      cellObj.container.x=Math.round(symbolSize/2);
-      cellObj.container.y=Math.round((i - EXTRA_SYMBOLS)*reelStep + symbolSize/2);
-      reelContainer.addChild(cellObj.container);
-      cells.push(cellObj);
-    }
+  cellObj.container.x = Math.round(symbolSize / 2);
+  // i=0..6 => (i-EXTRA_TOP) => -2..4
+  cellObj.container.y = Math.round((i - EXTRA_TOP) * reelStep + symbolSize / 2);
+
+  reelContainer.addChild(cellObj.container);
+  cells.push(cellObj);
+}
 
     reels.push({
       container: reelContainer,
