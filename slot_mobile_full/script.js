@@ -1,9 +1,9 @@
 // script.js — Slot mobile PIXI v5 (5x3)
-// ✅ Spin démarre instantanément (anti-lag réseau)
+// ✅ Anti-LAG: l'animation démarre instantanément (fetch en parallèle)
+// ✅ Anti-SWAP: positions Y verrouillées (pas de dérive), bounce via scale (ne révèle rien)
 // ✅ STOP rouge (2e clic) + tick par rouleau au stop
-// ✅ Anti-swap: settleQueue + snap-to-zero progressif (pas de coup sec)
-// ✅ Recycle O(1) sans min/max (moins de lag)
-// ✅ Glow OFF pendant le spin (perf), ON à la fin (rendu)
+// ✅ Glow "cheap" (sans GlowFilter) => beaucoup plus fluide sur iPhone
+// ✅ UI: slot centré, stats sous slot, valeurs fixes mono, boutons alignés
 
 // --------------------------------------------------
 // PIXI global settings
@@ -42,6 +42,8 @@ let winMultiplier = 1;
 let stopRequested = false;
 let stopRequestTime = 0;
 let spinInFlight = false;
+
+// résultat serveur (arrive en async)
 let pendingGrid = null;
 let gridArrivedAt = 0;
 
@@ -91,106 +93,59 @@ function getSafeTopPx() {
 }
 
 // --------------------------------------------------
-// VITESSES (départ plus rapide, bounce moins prononcé)
+// VITESSES (départ plus rapide, bounce discret)
 // --------------------------------------------------
 const SPEEDS = [
   {
     name: "LENT",
-    basePxPerMs: 1.05,
-    spinMs: 1650,
-    startStaggerMs: 115,
+    basePxPerMs: 1.10,
+    spinMs: 1500,
+    startStaggerMs: 110,
     stopStaggerMs: 130,
-    accelMs: 140,         // départ plus rapide
-    preDecelMs: 320,
-    settleMs: 360,
-    snapMs: 130,          // snap-to-zero progressif (anti swap)
-    bounceMs: 190,
-    bounceAmpFactor: 0.11 // bounce moins prononcé
+    accelMs: 120,
+    preDecelMs: 300,
+    settleMs: 340,
+    snapMs: 120,
+    bounceMs: 180,
+    bounceScaleAmp: 0.018, // bounce via scale (anti swap)
   },
   {
     name: "NORMAL",
-    basePxPerMs: 1.35,
-    spinMs: 1320,
-    startStaggerMs: 95,
+    basePxPerMs: 1.40,
+    spinMs: 1220,
+    startStaggerMs: 90,
     stopStaggerMs: 110,
-    accelMs: 125,
-    preDecelMs: 270,
-    settleMs: 320,
-    snapMs: 120,
-    bounceMs: 180,
-    bounceAmpFactor: 0.10
+    accelMs: 110,
+    preDecelMs: 260,
+    settleMs: 300,
+    snapMs: 110,
+    bounceMs: 170,
+    bounceScaleAmp: 0.017,
   },
   {
     name: "RAPIDE",
-    basePxPerMs: 1.70,
-    spinMs: 1050,
-    startStaggerMs: 80,
+    basePxPerMs: 1.75,
+    spinMs: 980,
+    startStaggerMs: 75,
     stopStaggerMs: 95,
-    accelMs: 115,
-    preDecelMs: 230,
-    settleMs: 280,
-    snapMs: 110,
-    bounceMs: 170,
-    bounceAmpFactor: 0.09
+    accelMs: 100,
+    preDecelMs: 220,
+    settleMs: 270,
+    snapMs: 100,
+    bounceMs: 160,
+    bounceScaleAmp: 0.016,
   },
 ];
 let speedIndex = 0;
 
 // --------------------------------------------------
-// Glow (optionnel) — ON uniquement hors spin (perf)
+// Glow cheap (très perf, pas de GlowFilter)
 // --------------------------------------------------
 const GLOW_COLORS = {
   wild: 0x2bff5a,
   bonus: 0x3aa6ff,
   premium77: 0xd45bff,
 };
-
-const GLOW_PARAMS = {
-  wild:    { distance: 6, outer: 0.70, inner: 0.20, quality: 0.22 },
-  bonus:   { distance: 6, outer: 0.65, inner: 0.20, quality: 0.22 },
-  premium: { distance: 7, outer: 0.85, inner: 0.20, quality: 0.24 },
-};
-
-let glowFilters = null;
-
-function buildGlowFilters() {
-  const hasGlow = !!(PIXI.filters && PIXI.filters.GlowFilter);
-  if (!hasGlow) return null;
-
-  const r = app.renderer.resolution || 1;
-
-  const fWild = new PIXI.filters.GlowFilter(
-    GLOW_PARAMS.wild.distance,
-    GLOW_PARAMS.wild.outer,
-    GLOW_PARAMS.wild.inner,
-    GLOW_COLORS.wild,
-    GLOW_PARAMS.wild.quality
-  );
-  const fBonus = new PIXI.filters.GlowFilter(
-    GLOW_PARAMS.bonus.distance,
-    GLOW_PARAMS.bonus.outer,
-    GLOW_PARAMS.bonus.inner,
-    GLOW_COLORS.bonus,
-    GLOW_PARAMS.bonus.quality
-  );
-  const fPremium = new PIXI.filters.GlowFilter(
-    GLOW_PARAMS.premium.distance,
-    GLOW_PARAMS.premium.outer,
-    GLOW_PARAMS.premium.inner,
-    GLOW_COLORS.premium77,
-    GLOW_PARAMS.premium.quality
-  );
-
-  fWild.resolution = r;
-  fBonus.resolution = r;
-  fPremium.resolution = r;
-
-  fWild.padding = GLOW_PARAMS.wild.distance * 2;
-  fBonus.padding = GLOW_PARAMS.bonus.distance * 2;
-  fPremium.padding = GLOW_PARAMS.premium.distance * 2;
-
-  return { wild: fWild, bonus: fBonus, premium: fPremium };
-}
 
 // --------------------------------------------------
 // AUDIO (pool anti-lag / overlap)
@@ -222,8 +177,17 @@ const audio = {
   stop:  makeAudioPool("assets/audio/stop.mp3", 5, 0.65),
   win:   makeAudioPool("assets/audio/win.mp3",  3, 0.70),
   bonus: makeAudioPool("assets/audio/bonus.mp3",3, 0.70),
-  tick:  makeAudioPool("assets/audio/stop.mp3", 8, 0.22), // tick = stop faible
+  tick:  makeAudioPool("assets/audio/stop.mp3", 8, 0.22),
 };
+
+// iOS: "unlock" audio au 1er tap (sinon parfois silence)
+let audioUnlocked = false;
+function unlockAudioOnce() {
+  if (audioUnlocked) return;
+  audioUnlocked = true;
+  try { audio.tick.play(0.001); } catch (e) {}
+  try { audio.tick.play(0.001); } catch (e) {}
+}
 
 // --------------------------------------------------
 // Loader helpers
@@ -244,7 +208,7 @@ function hideMessage() {
 function loadSpritesheet() {
   return new Promise((resolve, reject) => {
     const img = new Image();
-    img.src = "assets/spritesheet.png?v=10";
+    img.src = "assets/spritesheet.png?v=11";
     img.onload = () => {
       try {
         const baseTexture = PIXI.BaseTexture.from(img);
@@ -340,12 +304,15 @@ async function initPixi() {
   });
   app.renderer.roundPixels = true;
 
+  // unlock audio au 1er touch/click
+  app.view.addEventListener("pointerdown", unlockAudioOnce, { passive: true });
+
   showMessage("Chargement…");
 
   try {
     const baseTexture = await loadSpritesheet();
 
-    // 4x4 => 256x256, on utilise 12 cases
+    // 4x4 => 16 cases; on utilise 12 cases
     const fullW = baseTexture.width;
     const fullH = baseTexture.height;
     const COLS_SHEET = 4;
@@ -358,19 +325,11 @@ async function initPixi() {
       [0, 1],[1, 1],[2, 1],[3, 1],
       [0, 2],[1, 2],[2, 2],[3, 2],
     ];
-    const PAD = 0;
 
     symbolTextures = positions.map(([c, r]) => {
-      const rect = new PIXI.Rectangle(
-        c * cellW + PAD,
-        r * cellH + PAD,
-        cellW - PAD * 2,
-        cellH - PAD * 2
-      );
+      const rect = new PIXI.Rectangle(c * cellW, r * cellH, cellW, cellH);
       return new PIXI.Texture(baseTexture, rect);
     });
-
-    glowFilters = buildGlowFilters();
 
     buildBackground();
     buildSlotScene();
@@ -404,8 +363,6 @@ function rebuildAll() {
     reels = [];
     highlightedCells = [];
 
-    glowFilters = buildGlowFilters();
-
     buildBackground();
     buildSlotScene();
     buildHUD();
@@ -417,7 +374,7 @@ function rebuildAll() {
 }
 
 // --------------------------------------------------
-// Symbol cell (glow derrière + sprite net)
+// Symbol cell (glowSprite + mainSprite) — glow cheap
 // --------------------------------------------------
 function createSymbolCell(texture, sizePx) {
   const cell = new PIXI.Container();
@@ -429,7 +386,9 @@ function createSymbolCell(texture, sizePx) {
   glowSprite.height = sizePx;
   glowSprite.visible = false;
   glowSprite.roundPixels = true;
-  glowSprite.alpha = 0.55;
+  glowSprite.alpha = 0.0;
+  glowSprite.blendMode = PIXI.BLEND_MODES.ADD;
+  glowSprite.scale.set(1.12); // halo un peu plus large
 
   const mainSprite = new PIXI.Sprite(texture);
   mainSprite.anchor.set(0.5);
@@ -445,24 +404,21 @@ function applySymbolVisual(cellObj, symbolId) {
   cellObj.symbolId = symbolId;
 
   cellObj.glow.visible = false;
-  cellObj.glow.filters = null;
   cellObj.glow.tint = 0xffffff;
-
-  if (!glowFilters) return;
+  cellObj.glow.alpha = 0.0;
 
   if (symbolId === WILD_ID) {
-    cellObj.glow.alpha = 0.45;
     cellObj.glow.visible = true;
-    cellObj.glow.filters = [glowFilters.wild];
-  } else if (symbolId === BONUS_ID) {
-    cellObj.glow.alpha = 0.45;
-    cellObj.glow.visible = true;
-    cellObj.glow.filters = [glowFilters.bonus];
-  } else if (symbolId === PREMIUM77_ID) {
+    cellObj.glow.tint = GLOW_COLORS.wild;
     cellObj.glow.alpha = 0.35;
-    cellObj.glow.tint = GLOW_COLORS.premium77;
+  } else if (symbolId === BONUS_ID) {
     cellObj.glow.visible = true;
-    cellObj.glow.filters = [glowFilters.premium];
+    cellObj.glow.tint = GLOW_COLORS.bonus;
+    cellObj.glow.alpha = 0.35;
+  } else if (symbolId === PREMIUM77_ID) {
+    cellObj.glow.visible = true;
+    cellObj.glow.tint = GLOW_COLORS.premium77;
+    cellObj.glow.alpha = 0.30;
   }
 }
 
@@ -474,7 +430,7 @@ function randomSymbolId() {
   return Math.floor(Math.random() * symbolTextures.length);
 }
 
-// Perf: pendant le spin => glow OFF
+// allowGlow: false pendant spin/settle (perf), true à la fin
 function setCellSymbol(cellObj, symbolId, allowGlow) {
   const sid = safeId(symbolId);
   const tex = symbolTextures[sid];
@@ -485,7 +441,7 @@ function setCellSymbol(cellObj, symbolId, allowGlow) {
   else {
     cellObj.symbolId = sid;
     cellObj.glow.visible = false;
-    cellObj.glow.filters = null;
+    cellObj.glow.alpha = 0.0;
   }
 }
 
@@ -559,30 +515,31 @@ function buildSlotScene() {
     const reelContainer = new PIXI.Container();
     reelContainer.x = Math.round(c * (symbolSize + reelGap));
     reelContainer.y = 0;
+    reelContainer.scale.y = 1;
     slotContainer.addChild(reelContainer);
 
-    // 5 symboles: [-1,0,1,2,3] steps (1 extra haut + 3 visibles + 1 extra bas)
+    // 5 symboles: positions -1,0,1,2,3 (1 extra haut + 3 visibles + 1 extra bas)
     const cells = [];
     for (let i = 0; i < ROWS + 2; i++) {
       const idx = randomSymbolId();
       const cellObj = createSymbolCell(symbolTextures[idx], symbolSize);
-
-      // glow ON au repos
-      setCellSymbol(cellObj, idx, true);
+      setCellSymbol(cellObj, idx, true); // glow ON au repos
 
       cellObj.container.x = Math.round(symbolSize / 2);
+      // y verrouillé (pas de dérive)
       cellObj.container.y = Math.round((i - 1) * reelStep + symbolSize / 2);
+
       reelContainer.addChild(cellObj.container);
       cells.push(cellObj);
     }
 
     reels.push({
       container: reelContainer,
-      symbols: cells, // IMPORTANT: ordre top->bottom (y croissant)
+      symbols: cells,     // ordre top->bottom (0..4)
       offset: 0,
       vel: 0,
 
-      state: "idle", // idle | spin | settle | snap | bounce | done
+      state: "idle",      // idle | spin | settle | snap | bounce | done
       settleQueue: null,
       settleIdx: 0,
       didTick: false,
@@ -590,7 +547,6 @@ function buildSlotScene() {
       bounceStart: 0,
       snapStart: 0,
 
-      // timings
       startAt: 0,
       minStopAt: 0,
       settleStart: 0,
@@ -600,21 +556,25 @@ function buildSlotScene() {
 }
 
 // --------------------------------------------------
-// Recycle O(1) (anti-lag) — équivalent à ton ancien mais sans min/max
-// Descend tout d’un step et injecte un newTopId (hors écran)
+// Recycle anti-swap (Y LOCKED)
+// - Pas de +reelStep infini
+// - On garde toujours les Y sur [-1..3] * reelStep
 // --------------------------------------------------
 function recycleReelOneStepDown(reel, newTopId, allowGlow) {
   const s = reel.symbols;
 
-  // on décale tous les y d'un step (stable, reste dans [-1..3] ensuite)
-  for (let i = 0; i < s.length; i++) s[i].container.y += reelStep;
-
-  // le dernier (le plus bas) remonte tout en haut
+  // bottom -> top
   const bottom = s.pop();
-  bottom.container.y = s[0].container.y - reelStep;
-
-  setCellSymbol(bottom, newTopId, allowGlow); // changement texture hors écran (y < 0)
   s.unshift(bottom);
+
+  // change texture hors écran (position -1)
+  setCellSymbol(bottom, newTopId, allowGlow);
+
+  // ✅ verrouillage des positions (anti swap / anti jitter iPhone)
+  const half = symbolSize / 2;
+  for (let i = 0; i < s.length; i++) {
+    s[i].container.y = Math.round((i - 1) * reelStep + half);
+  }
 }
 
 // --------------------------------------------------
@@ -680,7 +640,7 @@ function setSpinButtonMode(isStop) {
   if (!btnSpin) return;
   if (isStop) {
     btnSpin._text.text = "STOP";
-    btnSpin._bg.tint = 0xff2d2d;
+    btnSpin._bg.tint = 0xff2d2d; // rouge
     btnSpin._shine.alpha = 0.10;
   } else {
     btnSpin._text.text = "SPIN";
@@ -731,6 +691,7 @@ function buildHUD() {
     0.5, 0.5, "700"
   );
 
+  // Stats sous slot: labels fixes + valeurs mono (ne bouge pas)
   const labelSize = Math.round(h * 0.022);
   const valueSize = Math.round(h * 0.024);
   const statsX = w / 2;
@@ -742,7 +703,7 @@ function buildHUD() {
   const rectW = w * 0.28;
   const rectH = h * 0.072;
 
-  const spinSize = Math.round(Math.min(w * 0.20, h * 0.13)); // un peu plus gros
+  const spinSize = Math.round(Math.min(w * 0.20, h * 0.13)); // carré + gros
   const yBtn = layout.buttonsY;
 
   btnSpin = makeButton("SPIN", spinSize, spinSize);
@@ -793,7 +754,6 @@ function formatStatsValues() {
   const gain  = String(lastWin).padStart(4, " ");
   return `${solde}      ${mise}      ${gain}`;
 }
-
 function updateHUDNumbers() {
   if (statsValueText) statsValueText.text = formatStatsValues();
 }
@@ -966,7 +926,7 @@ function startHighlight(cells) {
 
     const targetY = row * reelStep + symbolSize / 2;
 
-    // symbol visible = indices 1..3 => on cherche le plus proche
+    // visibles = indices 1..3
     let best = reel.symbols[1];
     let bestD = Math.abs(best.container.y - targetY);
     for (let i = 2; i <= 3; i++) {
@@ -1007,7 +967,7 @@ function smoothFactor(dt, tauMs) {
 }
 
 // --------------------------------------------------
-// Animation principale (spin instant + stop quand grid prête)
+// Stop + plans
 // --------------------------------------------------
 function requestStop() {
   if (!spinning || stopRequested) return;
@@ -1017,12 +977,14 @@ function requestStop() {
   updateHUDTexts("STOP…");
 }
 
+// initialise les timings (baseline)
 function prepareReelPlans(now, preset) {
   for (let c = 0; c < reels.length; c++) {
     const r = reels[c];
     r.offset = 0;
     r.vel = 0;
     r.container.y = 0;
+    r.container.scale.y = 1;
 
     r.state = "spin";
     r.settleQueue = null;
@@ -1031,41 +993,39 @@ function prepareReelPlans(now, preset) {
 
     r.startAt = now + c * preset.startStaggerMs;
 
-    // stop dépend de spinMs ET du réseau (gridArrivedAt)
     const baseStop = r.startAt + preset.spinMs + c * preset.stopStaggerMs;
     r.minStopAt = baseStop;
 
-    // valeurs provisoires (recalculées dès que grid arrive si besoin)
     r.settleStart = baseStop - preset.settleMs;
     r.preDecelStart = r.settleStart - preset.preDecelMs;
   }
 }
 
-function ensurePlansAfterGrid(preset) {
-  // si le réseau a été lent, on repousse stop/settle pour éviter swap
-  const now = performance.now();
-  for (let c = 0; c < reels.length; c++) {
-    const r = reels[c];
-    const needsGridTime = gridArrivedAt ? (gridArrivedAt + c * 60) : 0; // léger stagger réseau
-    const forcedStop = Math.max(r.minStopAt, needsGridTime);
+// timing dynamique (jamais avant le réseau)
+function computeDynamicSettleStart(now, r, col, preset) {
+  const baseline = r.settleStart;
 
-    // si STOP demandé => on raccourcit mais jamais avant grid
-    const stopBias = stopRequested ? (stopRequestTime + c * 70) : forcedStop;
+  // si grid pas arrivée => on ne settle pas
+  if (!pendingGrid) return baseline;
 
-    const stopAt = Math.max(forcedStop, stopBias);
-    r.settleStart = stopAt - preset.settleMs;
-    r.preDecelStart = r.settleStart - preset.preDecelMs * (stopRequested ? 0.60 : 1.0);
+  const gridReady = gridArrivedAt + col * 55;
+  let desired = Math.max(baseline, gridReady);
 
-    // sécurité: si réseau arrive après, on recale encore
-    if (now > r.settleStart && !pendingGrid) {
-      r.settleStart = now + 100;
-      r.preDecelStart = r.settleStart - preset.preDecelMs;
-    }
+  // STOP demandé => settle ASAP mais jamais avant gridReady
+  if (stopRequested) {
+    desired = Math.max(gridReady, now + 20);
   }
+
+  return desired;
+}
+
+function computeDynamicPreDecelStart(settleStart, preset) {
+  const mult = stopRequested ? 0.65 : 1.0;
+  return settleStart - preset.preDecelMs * mult;
 }
 
 function buildSettleQueueForReel(grid, col) {
-  // queue correcte: bot, mid, top, random
+  // IMPORTANT: injection [B, M, T, random] => final visible = [T, M, B]
   const topId = safeId(grid[0][col]);
   const midId = safeId(grid[1][col]);
   const botId = safeId(grid[2][col]);
@@ -1073,32 +1033,25 @@ function buildSettleQueueForReel(grid, col) {
 }
 
 function applyGlowForAllVisible() {
-  // réactive le glow une fois fini (rendu)
   for (let c = 0; c < reels.length; c++) {
     const r = reels[c];
-    // indices 1..3 visibles
     for (let i = 1; i <= 3; i++) applySymbolVisual(r.symbols[i], r.symbols[i].symbolId);
   }
 }
 
-function animateSpinUntilDone(preset, effectiveBet) {
+// --------------------------------------------------
+// Animation (démarre tout de suite, attend la grid sans bloquer)
+// --------------------------------------------------
+function animateSpinUntilDone(preset) {
   return new Promise((resolve) => {
     let prev = performance.now();
-
-    const bounceAmp = Math.min(reelStep * preset.bounceAmpFactor, 16);
 
     function tick(now) {
       const dt = Math.max(0, now - prev);
       prev = now;
 
-      // si grid a fini d’arriver, recale timings (1 fois)
-      if (pendingGrid && !animateSpinUntilDone._plansFixed) {
-        ensurePlansAfterGrid(preset);
-        animateSpinUntilDone._plansFixed = true;
-      }
-
       let allDone = true;
-      const k = smoothFactor(dt, 110); // réactif => moins de lag
+      const k = smoothFactor(dt, 110);
 
       for (let c = 0; c < reels.length; c++) {
         const r = reels[c];
@@ -1108,18 +1061,24 @@ function animateSpinUntilDone(preset, effectiveBet) {
 
         // ---------------- SPIN ----------------
         if (r.state === "spin") {
-          // si on est à l’heure du settle mais grid pas encore là -> on continue spin
-          if (now >= r.settleStart && pendingGrid) {
+          const settleStartDyn = computeDynamicSettleStart(now, r, c, preset);
+          const preDecelDyn = computeDynamicPreDecelStart(settleStartDyn, preset);
+
+          // si on est en zone settle ET grid dispo => settle
+          if (pendingGrid && now >= settleStartDyn) {
             r.state = "settle";
+            r._settleStartDyn = settleStartDyn;
           } else {
             let target = preset.basePxPerMs;
 
             const tAccel = clamp01((now - r.startAt) / preset.accelMs);
             const accel = easeInOutQuad(tAccel);
-            target *= (0.40 + 0.60 * accel);
+            target *= (0.42 + 0.58 * accel);
 
-            if (now >= r.preDecelStart) {
-              const t = clamp01((now - r.preDecelStart) / Math.max(1, (r.settleStart - r.preDecelStart)));
+            // pré décél (sans jamais forcer settle avant grid)
+            if (now >= preDecelDyn) {
+              const denom = Math.max(1, (settleStartDyn - preDecelDyn));
+              const t = clamp01((now - preDecelDyn) / denom);
               const dec = 1 - easeInOutQuad(t) * 0.78;
               target *= dec;
             }
@@ -1129,10 +1088,10 @@ function animateSpinUntilDone(preset, effectiveBet) {
 
             while (r.offset >= reelStep) {
               r.offset -= reelStep;
-              recycleReelOneStepDown(r, randomSymbolId(), false); // glow OFF pendant spin
+              recycleReelOneStepDown(r, randomSymbolId(), false); // glow OFF
             }
 
-            r.container.y = r.offset;
+            r.container.y = Math.round(r.offset);
           }
         }
 
@@ -1140,23 +1099,23 @@ function animateSpinUntilDone(preset, effectiveBet) {
         if (r.state === "settle") {
           if (!r.didTick) { audio.tick.play(0.22); r.didTick = true; }
 
+          const settleStartDyn = r._settleStartDyn || now;
+          const settleEnd = settleStartDyn + preset.settleMs;
+          const tSettle = clamp01((now - settleStartDyn) / preset.settleMs);
+
           if (!r.settleQueue) {
             r.settleQueue = buildSettleQueueForReel(pendingGrid, c);
             r.settleIdx = 0;
           }
 
-          const tSettle = clamp01((now - r.settleStart) / preset.settleMs);
-
-          const settleEnd = r.settleStart + preset.settleMs;
           const remainingMs = Math.max(1, settleEnd - now);
-
           const distToNextStep = reelStep - r.offset;
           const remainingSteps = Math.max(0, (r.settleQueue.length - r.settleIdx));
           const remainingDist = distToNextStep + Math.max(0, remainingSteps - 1) * reelStep;
 
           const baseNeed = remainingDist / remainingMs;
           const ease = 0.95 - 0.30 * easeOutCubic(tSettle);
-          const targetSpeed = Math.max(0.25, baseNeed * ease);
+          const targetSpeed = Math.max(0.28, baseNeed * ease);
 
           r.vel = r.vel + (targetSpeed - r.vel) * k;
           r.offset += r.vel * dt;
@@ -1164,25 +1123,24 @@ function animateSpinUntilDone(preset, effectiveBet) {
           while (r.offset >= reelStep && r.settleIdx < r.settleQueue.length) {
             r.offset -= reelStep;
             const nextId = r.settleQueue[r.settleIdx++];
-            recycleReelOneStepDown(r, nextId, false); // glow OFF pendant settle (perf + anti micro lag)
+            recycleReelOneStepDown(r, nextId, false); // glow OFF
           }
 
-          r.container.y = r.offset;
+          r.container.y = Math.round(r.offset);
 
-          // quand la queue est finie => SNAP progressif vers 0 (anti swap)
+          // queue finie => SNAP vers 0
           if (r.settleIdx >= r.settleQueue.length) {
             r.state = "snap";
             r.snapStart = now;
           }
         }
 
-        // ---------------- SNAP (anti swap) ----------------
+        // ---------------- SNAP ----------------
         if (r.state === "snap") {
           const t = clamp01((now - r.snapStart) / preset.snapMs);
-          // easing vers 0, sans changer les textures
           r.offset = r.offset * (1 - easeOutCubic(t));
           if (r.offset < 0.25) r.offset = 0;
-          r.container.y = r.offset;
+          r.container.y = Math.round(r.offset);
 
           if (t >= 1 || r.offset === 0) {
             r.state = "bounce";
@@ -1190,18 +1148,19 @@ function animateSpinUntilDone(preset, effectiveBet) {
             r.container.y = 0;
             r.offset = 0;
             r.vel = 0;
+            r.container.scale.y = 1;
           }
         }
 
-        // ---------------- BOUNCE (léger) ----------------
+        // ---------------- BOUNCE (via scale) ----------------
         if (r.state === "bounce") {
           const tb = clamp01((now - r.bounceStart) / preset.bounceMs);
           const s = Math.sin(tb * Math.PI);
-          const amp = bounceAmp * (1 - tb * 0.35);
-          r.container.y = -s * amp;
+
+          r.container.scale.y = 1 + s * preset.bounceScaleAmp;
 
           if (tb >= 1) {
-            r.container.y = 0;
+            r.container.scale.y = 1;
             r.state = "done";
           }
         }
@@ -1211,7 +1170,6 @@ function animateSpinUntilDone(preset, effectiveBet) {
       requestAnimationFrame(tick);
     }
 
-    animateSpinUntilDone._plansFixed = false;
     requestAnimationFrame(tick);
   });
 }
@@ -1220,7 +1178,7 @@ function animateSpinUntilDone(preset, effectiveBet) {
 // SPIN / STOP bouton
 // --------------------------------------------------
 async function onSpinOrStop() {
-  // si ça tourne -> STOP
+  // 2e clic => STOP
   if (spinning) {
     requestStop();
     setSpinButtonMode(true);
@@ -1233,11 +1191,14 @@ async function onSpinOrStop() {
   spinInFlight = true;
   spinning = true;
   stopRequested = false;
+  stopRequestTime = 0;
+
   pendingGrid = null;
   gridArrivedAt = 0;
 
   setSpinButtonMode(true);
 
+  // reset highlight
   highlightedCells.forEach((cell) => (cell.container.alpha = 1));
   highlightedCells = [];
 
@@ -1265,9 +1226,10 @@ async function onSpinOrStop() {
   updateHUDTexts(paidSpin ? "Spin…" : `Free spin… restants : ${freeSpins}`);
   audio.spin.play(0.70);
 
-  // ✅ lance l’anim IMMEDIATEMENT (anti-lag réseau)
+  // ✅ démarre l'anim tout de suite
   const now = performance.now();
   prepareReelPlans(now, preset);
+  const animPromise = animateSpinUntilDone(preset);
 
   // fetch en parallèle
   fetch("/spin", {
@@ -1279,7 +1241,6 @@ async function onSpinOrStop() {
     .then((data) => {
       pendingGrid = data.result || data.grid || data;
       gridArrivedAt = performance.now();
-      ensurePlansAfterGrid(preset);
     })
     .catch((err) => {
       console.error("Erreur API /spin", err);
@@ -1287,14 +1248,15 @@ async function onSpinOrStop() {
       gridArrivedAt = 0;
     });
 
-  // attente: si réseau lent, on continue à spinner jusqu’à grid
+  // on attend la grid (sans bloquer l'animation)
   while (!pendingGrid) {
-    await new Promise((res) => setTimeout(res, 30));
+    await new Promise((res) => setTimeout(res, 25));
   }
 
-  await animateSpinUntilDone(preset, effectiveBet);
+  // on attend la fin de l'animation
+  await animPromise;
 
-  // glow ON (rendu) à la fin
+  // glow ON à la fin
   applyGlowForAllVisible();
 
   const { baseWin, winningLines, bonusTriggered } = evaluateGrid(pendingGrid, effectiveBet);
