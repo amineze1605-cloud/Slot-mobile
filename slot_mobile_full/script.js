@@ -94,6 +94,43 @@ function playSound(name) {
   try { s.currentTime = 0; s.play().catch(() => {}); } catch (e) {}
 }
 
+// --- iOS: évite le petit lag au 1er son
+let audioUnlocked = false;
+function unlockAudioOnce() {
+  if (audioUnlocked) return;
+  audioUnlocked = true;
+  Object.values(sounds).forEach((a) => {
+    if (!a) return;
+    try {
+      const p = a.play();
+      if (p && p.then) p.then(() => { a.pause(); a.currentTime = 0; }).catch(() => {});
+      else { a.pause(); a.currentTime = 0; }
+    } catch(e) {}
+  });
+}
+window.addEventListener("pointerdown", unlockAudioOnce, { once: true, passive: true });
+
+// --- Tick: pool (sinon play()/currentTime en boucle = stutter)
+const TICK_POOL = [];
+(function initTickPool(){
+  const src = sounds.tick;
+  if (!src) return;
+  for (let i = 0; i < 6; i++) {
+    try {
+      const a = src.cloneNode();
+      a.volume = src.volume;
+      a.preload = "auto";
+      TICK_POOL.push(a);
+    } catch(e) {}
+  }
+})();
+let tickIndex = 0;
+function playTick() {
+  if (!TICK_POOL.length) { playSound("tick"); return; }
+  const a = TICK_POOL[tickIndex++ % TICK_POOL.length];
+  try { a.currentTime = 0; a.play().catch(() => {}); } catch(e) {}
+}
+
 // Paylines & paytable
 const PAYLINES = [
   [[0,0],[1,0],[2,0],[3,0],[4,0]],
