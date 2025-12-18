@@ -947,16 +947,16 @@ function animateSpinReels(finalGrid, controller) {
   const preset = SPEEDS[speedIndex];
 
   reels.forEach((reel) => {
-    reel.offset = 0;
-    reel.container.y = 0;
     reel.vel = 0;
     reel.settled = false;
-    reel.settleQueue = null;
-    reel.settleStepsLeft = 0;
     reel.bouncing = false;
     reel.bounceStart = 0;
     reel.lastTickAt = 0;
     reel.stopPlayed = false;
+
+    // état settle
+    reel.settleStepsDone = 0;
+    reel.finalSteps = null;
   });
 
   const startTime = performance.now();
@@ -964,12 +964,10 @@ function animateSpinReels(finalGrid, controller) {
   const plan = reels.map((_, c) => {
     const startAt = startTime + c * preset.startStaggerMs;
     const stopAt  = startAt + preset.spinMs + c * preset.stopStaggerMs;
-    const settleStart = stopAt - preset.settleMs;
-    const preDecelStart = settleStart - preset.preDecelMs;
-    return { startAt, stopAt, settleStart, preDecelStart };
+    return { startAt, stopAt };
   });
 
-  const bounceAmp = Math.min(reelStep * preset.bounceAmpFactor, 24);
+  const baseBounceAmp = Math.min(reelStep * preset.bounceAmpFactor, 16); // moins fort
 
   return new Promise((resolve) => {
     let prev = performance.now();
@@ -979,128 +977,103 @@ function animateSpinReels(finalGrid, controller) {
       prev = now;
 
       let allDone = true;
-
       const isQuick = !!controller?.quickStop;
-      const settleMs = isQuick
-        ? Math.max(160, Math.round(preset.settleMs * preset.settleFastFactor))
-        : preset.settleMs;
 
       for (let c = 0; c < reels.length; c++) {
         const reel = reels[c];
         const p = plan[c];
 
-        // QuickStop: force l’entrée dans SETTLE immédiatement
-        if (isQuick && now < p.settleStart) {
-          p.settleStart = now;
-          p.preDecelStart = now - 1;
-        }
-
         if (now < p.startAt) { allDone = false; continue; }
         if (reel.settled) continue;
         allDone = false;
 
-        const k = smoothFactor(dt, isQuick ? 90 : 140);
+        // --- QUICK STOP: on force la fin proche
+        const settleMs = isQuick
+          ? Math.max(170, Math.round(preset.settleMs * preset.settleFastFactor))
+          : preset.settleMs;
 
-        // SETTLE
-        if (now >= p.settleStart) {
-          const tSettle = clamp01((now - p.settleStart) / settleMs);
+        const stopAt = isQuick ? Math.min(p.stopAt, now + settleMs) : p.stopAt;
+        const settleStart = stopAt - settleMs;
+        const preDecelStart = settleStart - preset.preDecelMs;
 
-          // Injection résultat hors écran -> pas de correction finale
-          if (!reel.settleQueue) {
+        // smoothing tau: plus “punchy” au début => départ plus rapide, moins de lag
+        const sinceStart = now - p.startAt;
+        const tau = sinceStart < 160 ? 75 : (isQuick ? 95 : 135);
+        const k = smoothFactor(dt, tau);
+
+        // --- BOUNCE
+        if (reel.bouncing) {
+          const tb = clamp01((now - reel.bounceStart) / preset.bounceMs);
+          const s = Math.sin(tb * Math.PI);
+          const amp = baseBounceAmp * (1 - tb * 0.25);
+          reel.container.y = -s * amp; // petit bounce visuel
+          if (tb >= 1) {
+            reel.container.y = 0;
+            reel.vel = 0;
+            reel.settled = true;
+          }
+          continue;
+        }
+
+        // --- SETTLE
+        if (now >= settleStart) {
+          if (!reel.finalSteps) {
             const topId = safeId(finalGrid[0][c]);
             const midId = safeId(finalGrid[1][c]);
             const botId = safeId(finalGrid[2][c]);
-            reel.settleQueue = [botId, midId, topId, randomSymbolId()];
-            reel.settleStepsLeft = reel.settleQueue.length;
+            // ordre CRUCIAL : bot -> mid -> top
+            reel.finalSteps = [botId, midId, topId];
+            reel.settleStepsDone = 0;
           }
 
-          if (reel.bouncing) {
-            const tb = clamp01((now - reel.bounceStart) / preset.bounceMs);
-            const s = Math.sin(tb * Math.PI);
-            const amp = bounceAmp * (1 - tb * 0.15);
-            reel.container.y = -s * amp;
+          const tSettle = clamp01((now - settleStart) / settleMs);
 
-            if (tb >= 1) {
-              reel.container.y = 0;
-              reel.offset = 0;
-              reel.vel = 0;
-              reel.settled = true;
+          // targetSpeed pour finir smooth
+          let target = preset.basePxPerMs * (isQuick ? 1.25 : 1.0);
+          const dec = 1 - easeOutCubic(tSettle) * 0.78;
+          target *= Math.max(0.10, dec);
+
+          reel.vel = reel.vel + (target - reel.vel) * k;
+
+          const nextProvider = () => {
+            if (reel.settleStepsDone < 3) {
+              return reel.finalSteps[reel.settleStepsDone++];
             }
-            continue;
-          }
+            return randomSymbolId();
+          };
 
-          const settleEnd = p.settleStart + settleMs;
-          const remainingMs = Math.max(1, settleEnd - now);
+          const dy = reel.vel * dt;
+          stepReelWithOvershoot(reel, dy, nextProvider, now, isQuick);
 
-          const distToNextStep = reelStep - reel.offset;
-          const remainingSteps = Math.max(0, reel.settleStepsLeft);
-          const remainingDist = distToNextStep + Math.max(0, remainingSteps - 1) * reelStep;
-
-          const baseNeed = remainingDist / remainingMs;
-          const ease = 0.92 - 0.22 * easeOutCubic(tSettle);
-
-          let targetSpeed = Math.max(0.22, baseNeed * ease);
-          if (isQuick) targetSpeed *= 1.35;
-
-          reel.vel = reel.vel + (targetSpeed - reel.vel) * k;
-          reel.offset += reel.vel * dt;
-
-          while (reel.offset >= reelStep && reel.settleStepsLeft > 0) {
-            reel.offset -= reelStep;
-            const nextId = reel.settleQueue.length ? reel.settleQueue.shift() : randomSymbolId();
-            recycleReelOneStepDown(reel, nextId);
-
-            if (now - reel.lastTickAt > (isQuick ? 25 : 35)) {
-              playSound("tick");
-              reel.lastTickAt = now;
-            }
-            reel.settleStepsLeft--;
-          }
-
-          if (reel.settleStepsLeft <= 0) {
-            reel.offset = 0;
-            reel.container.y = 0;
-
+          // quand on a injecté top/mid/bot (3 pas), on déclenche stop + bounce
+          if (reel.settleStepsDone >= 3 && now >= stopAt - 12) {
             if (!reel.stopPlayed) {
               playSound("stop");
               reel.stopPlayed = true;
             }
-
             reel.bouncing = true;
             reel.bounceStart = now;
-            continue;
           }
-
-          reel.container.y = reel.offset;
           continue;
         }
 
-        // SPIN
+        // --- SPIN
         let target = preset.basePxPerMs;
 
-        const tAccel = clamp01((now - p.startAt) / preset.accelMs);
-        target *= easeInOutQuad(tAccel);
+        // accel plus rapide (ressenti “moins mou”)
+        const tA = clamp01((now - p.startAt) / preset.accelMs);
+        target *= (0.35 + 0.65 * easeOutCubic(tA));
 
-        if (now >= p.preDecelStart) {
-          const t = clamp01((now - p.preDecelStart) / (p.settleStart - p.preDecelStart));
-          const dec = 1 - easeInOutQuad(t) * 0.72;
-          target *= dec;
+        // pre-decel avant settle
+        if (now >= preDecelStart) {
+          const t = clamp01((now - preDecelStart) / (settleStart - preDecelStart));
+          target *= (1 - easeInOutQuad(t) * 0.72);
         }
 
         reel.vel = reel.vel + (target - reel.vel) * k;
-        reel.offset += reel.vel * dt;
 
-        while (reel.offset >= reelStep) {
-          reel.offset -= reelStep;
-          recycleReelOneStepDown(reel, randomSymbolId());
-
-          if (now - reel.lastTickAt > (isQuick ? 25 : 35)) {
-            playSound("tick");
-            reel.lastTickAt = now;
-          }
-        }
-
-        reel.container.y = reel.offset;
+        const dy = reel.vel * dt;
+        stepReelWithOvershoot(reel, dy, () => randomSymbolId(), now, isQuick);
       }
 
       if (allDone) return resolve();
