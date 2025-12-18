@@ -902,20 +902,44 @@ function easeOutCubic(t) { t = clamp01(t); return 1 - Math.pow(1 - t, 3); }
 function easeInOutQuad(t) { t = clamp01(t); return t < 0.5 ? 2*t*t : 1 - Math.pow(-2*t+2,2)/2; }
 function smoothFactor(dt, tauMs) { return 1 - Math.exp(-dt / Math.max(1, tauMs)); }
 
-// Recycle (no swap visible)
-function recycleReelOneStepDown(reel, nextTopId) {
+function stepReelWithOvershoot(reel, dy, nextTopIdProvider, now, isQuick) {
   const s = reel.symbols;
-  for (let i = 0; i < s.length; i++) s[i].container.y = Math.round(s[i].container.y + reelStep);
 
-  let maxIdx = 0;
-  for (let i = 1; i < s.length; i++) if (s[i].container.y > s[maxIdx].container.y) maxIdx = i;
-  const sym = s[maxIdx];
+  // avance tout
+  for (let i = 0; i < s.length; i++) s[i].container.y += dy;
 
-  let minY = s[0].container.y;
-  for (let i = 1; i < s.length; i++) if (s[i].container.y < minY) minY = s[i].container.y;
+  // limite où le symbole du bas est considéré "sorti"
+  const bottomLimit = visibleH + reelStep + symbolSize / 2;
 
-  sym.container.y = Math.round(minY - reelStep);
-  setCellSymbol(sym, nextTopId);
+  // boucle tant qu'on a dépassé (si dt gros => plusieurs pas)
+  while (true) {
+    let maxIdx = 0;
+    for (let i = 1; i < s.length; i++) {
+      if (s[i].container.y > s[maxIdx].container.y) maxIdx = i;
+    }
+
+    if (s[maxIdx].container.y < bottomLimit) break;
+
+    // overshoot -> on recale TOUT le monde pour tomber pile sur le pas
+    const over = s[maxIdx].container.y - bottomLimit;
+    for (let i = 0; i < s.length; i++) s[i].container.y -= over;
+
+    // trouve le plus haut, recycle le plus bas au-dessus
+    let minY = s[0].container.y;
+    for (let i = 1; i < s.length; i++) if (s[i].container.y < minY) minY = s[i].container.y;
+
+    s[maxIdx].container.y = minY - reelStep;
+
+    const nextId = nextTopIdProvider();
+    setCellSymbol(s[maxIdx], nextId);
+
+    // tick limité (évite rafale)
+    const minGap = isQuick ? 28 : 38;
+    if (now - reel.lastTickAt > minGap) {
+      playTick();
+      reel.lastTickAt = now;
+    }
+  }
 }
 
 // Animation (no hard apply at end)
