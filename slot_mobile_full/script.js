@@ -4,12 +4,13 @@
 // ✅ STOP rouge (2e clic) + tick par rouleau au stop
 // ✅ UI stable (stats lisibles sous slot, pas de chevauchement)
 
-// --------------------------------------------------
 // PIXI global settings
-// --------------------------------------------------
 PIXI.settings.ROUND_PIXELS = true;
 PIXI.settings.MIPMAP_TEXTURES = PIXI.MIPMAP_MODES.OFF;
 PIXI.settings.SCALE_MODE = PIXI.SCALE_MODES.LINEAR;
+
+// ✅ PERF toggle
+const ENABLE_GLOW = false;
 
 // --------------------------------------------------
 // DOM
@@ -157,8 +158,11 @@ const GLOW_PARAMS = {
 let glowFilters = null;
 
 function buildGlowFilters() {
+  if (!ENABLE_GLOW) return null;
   const hasGlow = !!(PIXI.filters && PIXI.filters.GlowFilter);
   if (!hasGlow) return null;
+  // ... le reste inchangé
+}
 
   const r = app.renderer.resolution || 1;
 
