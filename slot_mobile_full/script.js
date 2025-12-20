@@ -1,26 +1,22 @@
 // script.js — Slot mobile PIXI v5 (5x3)
 // ✅ Perf: pas d'audio (tu peux supprimer les mp3)
-// ✅ 7 sprites / rouleau (moins de swap visible)
-// ✅ STOP pro: 2e clic => stop rouleau par rouleau, accélère la décélération
+// ✅ 7 sprites / rouleau
+// ✅ STOP pro: 2e clic => stop synchro (tous en même temps), décélération agressive
 // ✅ Planning solide: reset userStopAt, ensurePlansAfterGrid unique, anti-Infinity
 // ✅ Lag réduit: animation démarre direct, fetch en parallèle
 
 // --------------------------------------------------
-// PIXI global settings
+// PERF toggles
 // --------------------------------------------------
-PIXI.settings.ROUND_PIXELS = true;
-PIXI.settings.MIPMAP_TEXTURES = PIXI.MIPMAP_MODES.OFF;
-PIXI.settings.SCALE_MODE = PIXI.SCALE_MODES.LINEAR;
-
-// --------------------------------------------------
-// PERF toggles (simple)
-// --------------------------------------------------
-const ENABLE_GLOW = false; // garde false pour perf/stabilité (on fera plus tard)
+const ENABLE_GLOW = false; // on verra plus tard
 
 // STOP pro
-const MIN_SPIN_BEFORE_STOP_MS = 260; // stop accepté plus vite
-const STOP_STAGGER_MS = 0;           // ✅ tous en même temps
-const STOP_PREDECEL_BOOST = 0.40;    // ✅ décélération plus agressive
+const MIN_SPIN_BEFORE_STOP_MS = 260; // stop accepté assez vite
+const STOP_PREDECEL_BOOST = 0.40;    // décélération plus agressive quand STOP
+
+// REELS strip
+const STRIP_COUNT = 7; // ✅ 7 sprites
+const TOP_EXTRA = 2;   // ✅ 2 au-dessus => visibles = indices 2..4
 
 // --------------------------------------------------
 // DOM & globales
@@ -55,13 +51,6 @@ let spinInFlight = false;
 let pendingGrid = null;
 let gridArrivedAt = 0;
 
-// HUD refs
-let messageText;
-let statsLabelText;
-let statsValueText;
-let btnMinus, btnPlus, btnSpin, btnInfo, btnSpeed;
-let paytableOverlay = null;
-
 // highlight
 let highlightedCells = [];
 let highlightTimer = 0;
@@ -88,8 +77,6 @@ let layout = {
   framePadX: 18,
   framePadY: 18,
   frameRadius: 26,
-  statsY: 0,
-  buttonsY: 0,
 };
 
 // --------------------------------------------------
@@ -101,21 +88,21 @@ function getSafeTopPx() {
 }
 
 // --------------------------------------------------
-// VITESSES (spin un peu plus long, départ un peu plus rapide)
+// VITESSES (spin un peu plus long, départ plus rapide)
 // --------------------------------------------------
 const SPEEDS = [
   {
     name: "LENT",
     basePxPerMs: 1.05,
-    spinMs: 1850,          // ✅ plus long
+    spinMs: 1850,
     startStaggerMs: 115,
     stopStaggerMs: 130,
-    accelMs: 110,          // ✅ départ plus rapide
+    accelMs: 110,
     preDecelMs: 360,
     settleMs: 380,
     snapMs: 140,
     bounceMs: 190,
-    bounceAmpFactor: 0.085 // ✅ bounce moins fort
+    bounceAmpFactor: 0.085
   },
   {
     name: "NORMAL",
@@ -187,7 +174,7 @@ function loadSpritesheet() {
 }
 
 // --------------------------------------------------
-// Background (pas de cadre écran)
+// Background
 // --------------------------------------------------
 function makeGradientTexture(w, h) {
   const c = document.createElement("canvas");
@@ -254,6 +241,11 @@ async function initPixi() {
     return;
   }
 
+  // ✅ PIXI global settings (protégé)
+  PIXI.settings.ROUND_PIXELS = true;
+  PIXI.settings.MIPMAP_TEXTURES = PIXI.MIPMAP_MODES.OFF;
+  PIXI.settings.SCALE_MODE = PIXI.SCALE_MODES.LINEAR;
+
   // ✅ pour iPhone: on limite DPR
   const dpr = Math.min(window.devicePixelRatio || 1, 1.35);
 
@@ -319,7 +311,6 @@ function rebuildAll() {
     if (slotMask) { slotMask.destroy(true); slotMask = null; }
     if (slotFrame) { slotFrame.destroy(true); slotFrame = null; }
     if (slotContainer) { slotContainer.destroy(true); slotContainer = null; }
-    if (paytableOverlay) { paytableOverlay.destroy(true); paytableOverlay = null; }
     if (bgContainer) { bgContainer.destroy(true); bgContainer = null; }
 
     app.stage.removeChildren();
@@ -401,9 +392,6 @@ function buildSlotScene() {
   layout.slotX = Math.round((w - totalReelWidth) / 2);
   layout.slotY = Math.round(topZone + (availableH - visibleH) * 0.30);
 
-  layout.statsY = layout.slotY + visibleH + layout.framePadY + Math.round(h * 0.03);
-  layout.buttonsY = layout.statsY + Math.round(h * 0.12);
-
   slotContainer = new PIXI.Container();
   slotContainer.x = layout.slotX;
   slotContainer.y = layout.slotY;
@@ -435,10 +423,6 @@ function buildSlotScene() {
 
   reels = [];
 
-  // ✅ 7 sprites: 2 au-dessus + 3 visibles + 2 en dessous
-  const STRIP_COUNT = 7;
-  const TOP_EXTRA = 2; // indices visibles = TOP_EXTRA .. TOP_EXTRA+2
-
   for (let c = 0; c < COLS; c++) {
     const reelContainer = new PIXI.Container();
     reelContainer.x = Math.round(c * (symbolSize + reelGap));
@@ -460,14 +444,13 @@ function buildSlotScene() {
 
     reels.push({
       container: reelContainer,
-      symbols: cells,     // ordre top->bottom
+      symbols: cells,
       offset: 0,
       vel: 0,
 
-      state: "idle",      // spin | settle | snap | bounce | done
+      state: "idle",
       settleQueue: null,
       settleIdx: 0,
-      didTick: false,
 
       bounceStart: 0,
       snapStart: 0,
@@ -477,23 +460,16 @@ function buildSlotScene() {
       settleStart: 0,
       preDecelStart: 0,
 
-      userStopAt: Infinity, // ✅ important
+      userStopAt: Infinity,
     });
   }
 }
 
 // ==================================================
 // HUD v2 — UI "slot pro"
-// Remplace ton ancien HUD par ce bloc complet
-// Dépendances attendues (déjà dans ton script) :
-// - app, layout, bet, balance, lastWin, spinning
-// - SPEEDS, speedIndex
-// - onSpinOrStop(), togglePaytable()
 // ==================================================
-
 let hud = {
   root: null,
-
   topPanel: null,
   topText: null,
 
@@ -511,9 +487,6 @@ let hud = {
   btnInfo: null,
 };
 
-// ---------------------------
-// Helpers visuels
-// ---------------------------
 function makePanelTexture(w, h, top = "#111827", mid = "#0b1220", bot = "#050814") {
   const c = document.createElement("canvas");
   c.width = Math.max(2, Math.floor(w));
@@ -595,9 +568,6 @@ function makeValue(txt, size) {
   }));
 }
 
-// ---------------------------
-// Chips de mise
-// ---------------------------
 function makeChip(label, w, h) {
   const c = new PIXI.Container();
 
@@ -633,9 +603,6 @@ function setChipSelected(chip, selected) {
   chip._bg.alpha = selected ? 1.0 : 0.95;
 }
 
-// ---------------------------
-// Bouton rond (SPIN / STOP / VIT / INFO)
-// ---------------------------
 function makeRoundButton(diam) {
   const c = new PIXI.Container();
   c.interactive = true;
@@ -659,13 +626,14 @@ function makeRoundButton(diam) {
     fontFamily: "system-ui",
     fontSize: Math.min(44, diam * 0.26),
     fill: 0xffffff,
-    fontWeight: "1000",
+    fontWeight: "900",
     stroke: 0x000000,
     strokeThickness: 5,
     dropShadow: true,
     dropShadowAlpha: 0.55,
     dropShadowBlur: 5,
     dropShadowDistance: 2,
+    align: "center", // ✅ important pour multi-ligne
   }));
   t.anchor.set(0.5);
 
@@ -675,7 +643,6 @@ function makeRoundButton(diam) {
   c._inner = inner;
   c._text = t;
 
-  // feedback press
   c.on("pointerdown", () => { c.scale.set(0.98); });
   c.on("pointerup", () => { c.scale.set(1.0); });
   c.on("pointerupoutside", () => { c.scale.set(1.0); });
@@ -699,16 +666,11 @@ function setSpinButtonMode(isStop) {
 
 function refreshSpeedButtonLabel() {
   if (!hud.btnSpeed || !hud.btnSpeed._text) return;
-  const name = (typeof SPEEDS !== "undefined" && SPEEDS[speedIndex]) ? SPEEDS[speedIndex].name : "VIT";
-  // Affiche "VIT\nLENT" si possible (2 lignes)
+  const name = (SPEEDS && SPEEDS[speedIndex]) ? SPEEDS[speedIndex].name : "VIT";
   hud.btnSpeed._text.text = `VIT\n${name}`;
-  hud.btnSpeed._text.style.fontSize = Math.max(14, Math.round(hud.btnSpeed._ring.width * 0.18));
-  hud.btnSpeed._text.align = "center";
+  hud.btnSpeed._text.style.align = "center"; // ✅ FIX (pas hud.btnSpeed._text.align)
 }
 
-// ---------------------------
-// HUD principal
-// ---------------------------
 function buildHUD() {
   const w = app.screen.width;
   const h = app.screen.height;
@@ -720,9 +682,9 @@ function buildHUD() {
   hud.root = new PIXI.Container();
   app.stage.addChild(hud.root);
 
-  const safeTop = (typeof getSafeTopPx === "function") ? getSafeTopPx() : 16;
+  const safeTop = getSafeTopPx();
 
-  // ---- TOP MESSAGE PANEL
+  // TOP message
   const topW = Math.min(w * 0.92, 680);
   const topH = Math.max(46, Math.round(h * 0.06));
   hud.topPanel = makeRoundedPanel(topW, topH, 18);
@@ -737,7 +699,7 @@ function buildHUD() {
   hud.topPanel.addChild(hud.topText);
   hud.root.addChild(hud.topPanel);
 
-  // ---- METERS (SOUS SLOT)
+  // meters sous slot
   const meterW = Math.min(w * 0.92, 720);
   const meterH = Math.max(88, Math.round(h * 0.11));
   const meterX = Math.round((w - meterW) / 2);
@@ -748,7 +710,6 @@ function buildHUD() {
   hud.meterPanel.y = meterY;
   hud.root.addChild(hud.meterPanel);
 
-  // 3 colonnes
   const colPad = 14;
   const colW = (meterW - colPad * 2) / 3;
 
@@ -794,7 +755,7 @@ function buildHUD() {
     gainLabel, hud.gainValue
   );
 
-  // ---- CHIPS ROW (mise)
+  // chips
   hud.chips.forEach(c => c.destroy({ children: true }));
   hud.chips = [];
 
@@ -827,7 +788,7 @@ function buildHUD() {
     cx += chipW + gap;
   }
 
-  // ---- SPIN + boutons ronds
+  // boutons
   const spinDiam = Math.round(Math.min(w * 0.30, h * 0.18));
   const spinY = Math.round(chipsY + chipH + h * 0.07);
 
@@ -837,9 +798,7 @@ function buildHUD() {
   hud.btnSpin.y = spinY;
   hud.root.addChild(hud.btnSpin);
 
-  hud.btnSpin.on("pointerup", () => {
-    if (typeof onSpinOrStop === "function") onSpinOrStop();
-  });
+  hud.btnSpin.on("pointerup", () => onSpinOrStop());
 
   const sideDiam = Math.round(spinDiam * 0.62);
 
@@ -856,28 +815,20 @@ function buildHUD() {
 
   hud.btnSpeed.on("pointerup", () => {
     if (spinning) return;
-    if (typeof SPEEDS !== "undefined" && SPEEDS.length) {
-      speedIndex = (speedIndex + 1) % SPEEDS.length;
-      refreshSpeedButtonLabel();
-      updateHUDTexts(`Vitesse : ${SPEEDS[speedIndex].name}`);
-    } else {
-      updateHUDTexts("Vitesse : N/A");
-    }
+    speedIndex = (speedIndex + 1) % SPEEDS.length;
+    refreshSpeedButtonLabel();
+    updateHUDTexts(`Vitesse : ${SPEEDS[speedIndex].name}`);
   });
 
   hud.btnInfo.on("pointerup", () => {
     if (typeof togglePaytable === "function") togglePaytable();
   });
 
-  // valeurs initiales
   refreshSpeedButtonLabel();
   updateHUDNumbers();
   setSpinButtonMode(false);
 }
 
-// ---------------------------
-// Updates HUD
-// ---------------------------
 function updateHUDTexts(msg) {
   const m = (msg || "").toString();
   if (hud.topText) hud.topText.text = m || "";
@@ -895,7 +846,7 @@ function updateHUDNumbers() {
 }
 
 // --------------------------------------------------
-// Paylines / Paytable + eval (inchangé)
+// Paylines / Paytable
 // --------------------------------------------------
 const PAYLINES = [
   [[0, 0],[1, 0],[2, 0],[3, 0],[4, 0]],
@@ -968,14 +919,11 @@ function evaluateGrid(grid, betValue) {
 }
 
 // --------------------------------------------------
-// Highlight (simple)
+// Highlight (7 sprites => visibles 2..4)
 // --------------------------------------------------
 function startHighlight(cells) {
   highlightedCells.forEach((cell) => (cell.container.alpha = 1));
   highlightedCells = [];
-
-  // indices visibles pour 7 sprites: TOP_EXTRA=2 => visibles 2..4
-  const TOP_EXTRA = 2;
 
   cells.forEach(([col, row]) => {
     const reel = reels[col];
@@ -1029,7 +977,7 @@ function recycleReelOneStepDown(reel, newTopId) {
 }
 
 // --------------------------------------------------
-// STOP pro
+// STOP pro (synchro)
 // --------------------------------------------------
 function requestStop(preset) {
   if (!spinning || stopRequested) return;
@@ -1037,18 +985,13 @@ function requestStop(preset) {
   stopRequested = true;
   stopArmedAt = performance.now();
 
-  // ✅ STOP global: même moment pour tous
-  const globalStopAt = stopArmedAt;
-
   for (let c = 0; c < reels.length; c++) {
     const r = reels[c];
     const earliest = r.startAt + MIN_SPIN_BEFORE_STOP_MS;
-    r.userStopAt = Math.max(earliest, globalStopAt);
+    r.userStopAt = Math.max(earliest, stopArmedAt);
   }
 
-  // si la grille est déjà arrivée, on recalc tout de suite
   if (gridArrivedAt) ensurePlansAfterGrid(preset);
-
   updateHUDTexts("STOP…");
 }
 
@@ -1059,7 +1002,7 @@ function prepareReelPlans(now, preset) {
   for (let c = 0; c < reels.length; c++) {
     const r = reels[c];
 
-    r.userStopAt = Infinity; // ✅ reset important
+    r.userStopAt = Infinity;
 
     r.offset = 0;
     r.vel = 0;
@@ -1068,7 +1011,6 @@ function prepareReelPlans(now, preset) {
     r.state = "spin";
     r.settleQueue = null;
     r.settleIdx = 0;
-    r.didTick = false;
 
     r.snapStart = 0;
 
@@ -1082,25 +1024,31 @@ function prepareReelPlans(now, preset) {
   }
 }
 
-// ✅ UNIQUE (pas de doublon)
+// ✅ IMPORTANT: STOP => settleStart >= now (évite les vitesses folles)
 function ensurePlansAfterGrid(preset) {
   const now = performance.now();
 
   for (let c = 0; c < reels.length; c++) {
     const r = reels[c];
 
-    const needsGridTime = gridArrivedAt ? gridArrivedAt : 0; // ✅ stop synchro
+    const needsGridTime = gridArrivedAt ? gridArrivedAt : 0;
 
     const normalStopAt = Math.max(r.minStopAt, needsGridTime);
 
-    // user stop sécurisé (anti Infinity)
     const u = Number.isFinite(r.userStopAt) ? r.userStopAt : now;
     const requestedStopAt = stopRequested ? Math.max(u, needsGridTime) : normalStopAt;
 
     const stopAt = stopRequested ? requestedStopAt : normalStopAt;
 
-    r.settleStart = stopAt - preset.settleMs;
-    r.settleStart = Math.max(r.startAt + 80, r.settleStart);
+    // settleStart
+    let settleStart = stopAt - preset.settleMs;
+
+    // si STOP => on démarre la décélération "maintenant" (propre)
+    if (stopRequested) settleStart = Math.max(now, settleStart);
+
+    // garde-fou
+    settleStart = Math.max(r.startAt + 60, settleStart);
+    r.settleStart = settleStart;
 
     const preBoost = stopRequested ? STOP_PREDECEL_BOOST : 1.0;
     r.preDecelStart = r.settleStart - preset.preDecelMs * preBoost;
@@ -1216,7 +1164,7 @@ function animateSpinUntilDone(preset) {
           }
         }
 
-        // BOUNCE (léger)
+        // BOUNCE
         if (r.state === "bounce") {
           const tb = clamp01((now - r.bounceStart) / preset.bounceMs);
           const s = Math.sin(tb * Math.PI);
@@ -1243,7 +1191,6 @@ function animateSpinUntilDone(preset) {
 // --------------------------------------------------
 async function onSpinOrStop() {
   if (spinning) {
-    // STOP
     const preset = SPEEDS[speedIndex];
     requestStop(preset);
     setSpinButtonMode(true);
@@ -1288,11 +1235,9 @@ async function onSpinOrStop() {
   updateHUDNumbers();
   updateHUDTexts(paidSpin ? "Spin…" : `Free spin… restants : ${freeSpins}`);
 
-  // démarre anim direct
   const now = performance.now();
   prepareReelPlans(now, preset);
 
-  // fetch en parallèle
   fetch("/spin", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1302,7 +1247,7 @@ async function onSpinOrStop() {
     .then((data) => {
       pendingGrid = data.result || data.grid || data;
       gridArrivedAt = performance.now();
-      ensurePlansAfterGrid(preset); // ✅ recalc auto-stop (et stop user si déjà demandé)
+      ensurePlansAfterGrid(preset);
     })
     .catch((err) => {
       console.error("Erreur API /spin", err);
@@ -1310,7 +1255,6 @@ async function onSpinOrStop() {
       gridArrivedAt = 0;
     });
 
-  // attend la grille
   while (!pendingGrid) {
     await new Promise((res) => setTimeout(res, 25));
   }
@@ -1330,7 +1274,6 @@ async function onSpinOrStop() {
   balance += totalWin;
   updateHUDNumbers();
 
-  // message
   spinning = false;
   spinInFlight = false;
   setSpinButtonMode(false);
@@ -1356,16 +1299,12 @@ async function onSpinOrStop() {
 }
 
 // --------------------------------------------------
-// Bet
+// Paytable (optionnel)
+// Si tu n’as pas encore remis ton overlay, ça évite une erreur au clic INFO.
+// Tu peux remplacer plus tard par ton vrai overlay.
 // --------------------------------------------------
-function onBetMinus() {
-  if (spinning) return;
-  if (bet > 1) { bet -= 1; updateHUDNumbers(); }
-}
-function onBetPlus() {
-  if (spinning) return;
-  bet += 1;
-  updateHUDNumbers();
+function togglePaytable() {
+  updateHUDTexts("Paytable: à ajouter (plus tard)");
 }
 
 // --------------------------------------------------
