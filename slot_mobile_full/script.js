@@ -1,22 +1,29 @@
 // script.js — Slot mobile PIXI v5 (5x3)
 // ✅ Perf: pas d'audio (tu peux supprimer les mp3)
-// ✅ 7 sprites / rouleau
-// ✅ STOP pro: 2e clic => stop synchro (tous en même temps), décélération agressive
-// ✅ Planning solide: reset userStopAt, ensurePlansAfterGrid unique, anti-Infinity
-// ✅ Lag réduit: animation démarre direct, fetch en parallèle
+// ✅ 7 sprites / rouleau (moins de swap visible)
+// ✅ STOP pro: 2e clic => stop rapide synchro (tous ensemble) + décélération accélérée
+// ✅ Animation démarre immédiatement (anti-lag réseau)
+// ✅ HUD v3: textes non doublés + contours plus fins + mise en page propre
+
+// --------------------------------------------------
+// PIXI global settings
+// --------------------------------------------------
+PIXI.settings.ROUND_PIXELS = true;
+PIXI.settings.MIPMAP_TEXTURES = PIXI.MIPMAP_MODES.OFF;
+PIXI.settings.SCALE_MODE = PIXI.SCALE_MODES.LINEAR;
 
 // --------------------------------------------------
 // PERF toggles
 // --------------------------------------------------
-const ENABLE_GLOW = false; // on verra plus tard
+const ENABLE_GLOW = false; // pas utilisé pour l’instant
 
-// STOP pro
-const MIN_SPIN_BEFORE_STOP_MS = 260; // stop accepté assez vite
-const STOP_PREDECEL_BOOST = 0.40;    // décélération plus agressive quand STOP
+// STOP pro (synchro + rapide)
+const MIN_SPIN_BEFORE_STOP_MS = 220; // plus petit = stop accepté plus vite
+const STOP_PREDECEL_BOOST = 0.40;    // plus petit = décélération plus agressive
 
-// REELS strip
-const STRIP_COUNT = 7; // ✅ 7 sprites
-const TOP_EXTRA = 2;   // ✅ 2 au-dessus => visibles = indices 2..4
+// Reels strip (7 sprites)
+const STRIP_COUNT = 7; // 2 au-dessus + 3 visibles + 2 dessous
+const TOP_EXTRA = 2;   // indices visibles = 2..4
 
 // --------------------------------------------------
 // DOM & globales
@@ -88,7 +95,7 @@ function getSafeTopPx() {
 }
 
 // --------------------------------------------------
-// VITESSES (spin un peu plus long, départ plus rapide)
+// VITESSES (spin un peu plus long, départ rapide, bounce léger)
 // --------------------------------------------------
 const SPEEDS = [
   {
@@ -102,7 +109,7 @@ const SPEEDS = [
     settleMs: 380,
     snapMs: 140,
     bounceMs: 190,
-    bounceAmpFactor: 0.085
+    bounceAmpFactor: 0.070, // ✅ moins prononcé
   },
   {
     name: "NORMAL",
@@ -115,7 +122,7 @@ const SPEEDS = [
     settleMs: 340,
     snapMs: 135,
     bounceMs: 180,
-    bounceAmpFactor: 0.08
+    bounceAmpFactor: 0.065,
   },
   {
     name: "RAPIDE",
@@ -128,16 +135,10 @@ const SPEEDS = [
     settleMs: 300,
     snapMs: 125,
     bounceMs: 170,
-    bounceAmpFactor: 0.075
+    bounceAmpFactor: 0.060,
   },
 ];
 let speedIndex = 0;
-
-// --------------------------------------------------
-// Glow (désactivé pour l’instant)
-// --------------------------------------------------
-let glowFilters = null;
-function buildGlowFilters() { return null; }
 
 // --------------------------------------------------
 // Loader helpers
@@ -167,7 +168,9 @@ function loadSpritesheet() {
         baseTexture.scaleMode = PIXI.SCALE_MODES.LINEAR;
         baseTexture.update();
         resolve(baseTexture);
-      } catch (e) { reject(e); }
+      } catch (e) {
+        reject(e);
+      }
     };
     img.onerror = (e) => reject(e || new Error("Impossible de charger assets/spritesheet.png"));
   });
@@ -241,12 +244,7 @@ async function initPixi() {
     return;
   }
 
-  // ✅ PIXI global settings (protégé)
-  PIXI.settings.ROUND_PIXELS = true;
-  PIXI.settings.MIPMAP_TEXTURES = PIXI.MIPMAP_MODES.OFF;
-  PIXI.settings.SCALE_MODE = PIXI.SCALE_MODES.LINEAR;
-
-  // ✅ pour iPhone: on limite DPR
+  // ✅ iPhone: limite DPR pour perf
   const dpr = Math.min(window.devicePixelRatio || 1, 1.35);
 
   app = new PIXI.Application({
@@ -265,7 +263,7 @@ async function initPixi() {
   try {
     const baseTexture = await loadSpritesheet();
 
-    // 4x4 => 16 cases, on utilise 12 cases
+    // 4x4 => 16 cases, on utilise 12 cases (0..11)
     const fullW = baseTexture.width;
     const fullH = baseTexture.height;
     const COLS_SHEET = 4;
@@ -284,16 +282,15 @@ async function initPixi() {
       return new PIXI.Texture(baseTexture, rect);
     });
 
-    glowFilters = ENABLE_GLOW ? buildGlowFilters() : null;
-
     buildBackground();
     buildSlotScene();
     buildHUD();
-
     hideMessage();
-    updateHUDTexts("Appuyez sur SPIN pour lancer");
-    app.ticker.add(updateHighlight);
 
+    updateHUDTexts("Appuyez sur SPIN pour lancer");
+    setCenterStatus("Mettez votre mise");
+
+    app.ticker.add(updateHighlight);
     window.addEventListener("resize", rebuildAll);
   } catch (e) {
     console.error("Erreur chargement", e);
@@ -313,17 +310,19 @@ function rebuildAll() {
     if (slotContainer) { slotContainer.destroy(true); slotContainer = null; }
     if (bgContainer) { bgContainer.destroy(true); bgContainer = null; }
 
+    if (paytableOverlay) { paytableOverlay.destroy({ children: true }); paytableOverlay = null; }
+    if (hud?.root) { hud.root.destroy({ children: true }); hud.root = null; }
+
     app.stage.removeChildren();
     reels = [];
     highlightedCells = [];
-
-    glowFilters = ENABLE_GLOW ? buildGlowFilters() : null;
 
     buildBackground();
     buildSlotScene();
     buildHUD();
 
     updateHUDTexts(spinning ? "Spin…" : "Appuyez sur SPIN pour lancer");
+    setCenterStatus(spinning ? "Bonne chance !" : "Mettez votre mise");
   } catch (e) {
     console.error("Resize rebuild error:", e);
   }
@@ -361,7 +360,7 @@ function setCellSymbol(cellObj, symbolId) {
 }
 
 // --------------------------------------------------
-// Slot scene + frame + mask + reels (✅ 7 sprites)
+// Slot scene + frame + mask + reels (7 sprites)
 // --------------------------------------------------
 function buildSlotScene() {
   const w = app.screen.width;
@@ -397,7 +396,7 @@ function buildSlotScene() {
   slotContainer.y = layout.slotY;
 
   slotFrame = new PIXI.Graphics();
-  slotFrame.lineStyle(6, 0xf2b632, 1);
+  slotFrame.lineStyle(3, 0xf2b632, 1);   // ✅ plus fin
   slotFrame.beginFill(0x060b1a, 0.78);
   slotFrame.drawRoundedRect(
     layout.slotX - layout.framePadX,
@@ -444,11 +443,11 @@ function buildSlotScene() {
 
     reels.push({
       container: reelContainer,
-      symbols: cells,
+      symbols: cells,     // top->bottom
       offset: 0,
       vel: 0,
 
-      state: "idle",
+      state: "idle",      // spin | settle | snap | bounce | done
       settleQueue: null,
       settleIdx: 0,
 
@@ -466,10 +465,13 @@ function buildSlotScene() {
 }
 
 // ==================================================
-// HUD v2 — UI "slot pro"
+// HUD v3 (raffiné)
 // ==================================================
+let paytableOverlay = null;
+
 let hud = {
   root: null,
+
   topPanel: null,
   topText: null,
 
@@ -487,7 +489,7 @@ let hud = {
   btnInfo: null,
 };
 
-function makePanelTexture(w, h, top = "#111827", mid = "#0b1220", bot = "#050814") {
+function makePanelTexture(w, h, top = "#121a2b", mid = "#0b1220", bot = "#050814") {
   const c = document.createElement("canvas");
   c.width = Math.max(2, Math.floor(w));
   c.height = Math.max(2, Math.floor(h));
@@ -502,10 +504,10 @@ function makePanelTexture(w, h, top = "#111827", mid = "#0b1220", bot = "#050814
 
   const v = ctx.createRadialGradient(
     c.width * 0.5, c.height * 0.2, 10,
-    c.width * 0.5, c.height * 0.5,
+    c.width * 0.5, c.height * 0.55,
     Math.max(w, h)
   );
-  v.addColorStop(0, "rgba(255,255,255,0.05)");
+  v.addColorStop(0, "rgba(255,255,255,0.04)");
   v.addColorStop(1, "rgba(0,0,0,0.35)");
   ctx.fillStyle = v;
   ctx.fillRect(0, 0, c.width, c.height);
@@ -522,19 +524,18 @@ function makeRoundedPanel(w, h, radius, borderColor = 0xf2b632) {
   cont.addChild(bg);
 
   const border = new PIXI.Graphics();
-  border.lineStyle(3, borderColor, 1);
+  border.lineStyle(2, borderColor, 1); // ✅ fin
   border.drawRoundedRect(0, 0, w, h, radius);
   cont.addChild(border);
 
   const shine = new PIXI.Graphics();
-  shine.beginFill(0xffffff, 0.05);
-  shine.drawRoundedRect(6, 6, w - 12, h * 0.35, Math.min(radius, 16));
+  shine.beginFill(0xffffff, 0.035);
+  shine.drawRoundedRect(6, 6, w - 12, h * 0.32, Math.min(radius, 16));
   shine.endFill();
   cont.addChild(shine);
 
   cont._bg = bg;
   cont._border = border;
-
   return cont;
 }
 
@@ -547,7 +548,7 @@ function makeLabel(txt, size) {
     stroke: 0x000000,
     strokeThickness: 3,
     dropShadow: true,
-    dropShadowAlpha: 0.45,
+    dropShadowAlpha: 0.35,
     dropShadowBlur: 3,
     dropShadowDistance: 2,
   }));
@@ -562,7 +563,7 @@ function makeValue(txt, size) {
     stroke: 0x000000,
     strokeThickness: 4,
     dropShadow: true,
-    dropShadowAlpha: 0.55,
+    dropShadowAlpha: 0.45,
     dropShadowBlur: 4,
     dropShadowDistance: 2,
   }));
@@ -572,14 +573,14 @@ function makeChip(label, w, h) {
   const c = new PIXI.Container();
 
   const g = new PIXI.Graphics();
-  g.beginFill(0x0b1220, 0.85);
-  g.lineStyle(3, 0xf2b632, 1);
+  g.beginFill(0x0b1220, 0.88);
+  g.lineStyle(2, 0xf2b632, 1);
   g.drawRoundedRect(-w / 2, -h / 2, w, h, Math.min(14, h * 0.4));
   g.endFill();
 
   const t = new PIXI.Text(label, new PIXI.TextStyle({
     fontFamily: "system-ui",
-    fontSize: Math.min(20, h * 0.45),
+    fontSize: Math.min(20, h * 0.48),
     fill: 0xffffff,
     fontWeight: "900",
     stroke: 0x000000,
@@ -590,16 +591,14 @@ function makeChip(label, w, h) {
   c.addChild(g, t);
   c.interactive = true;
   c.buttonMode = true;
-
   c._bg = g;
   c._text = t;
-
   return c;
 }
 
 function setChipSelected(chip, selected) {
   if (!chip || !chip._bg) return;
-  chip._bg.tint = selected ? 0x2dd4bf : 0xffffff;
+  chip._bg.tint = selected ? 0x22c55e : 0xffffff;
   chip._bg.alpha = selected ? 1.0 : 0.95;
 }
 
@@ -612,13 +611,13 @@ function makeRoundButton(diam) {
 
   const ring = new PIXI.Graphics();
   ring.beginFill(0x0b1220, 0.92);
-  ring.lineStyle(6, 0xf2b632, 1);
+  ring.lineStyle(4, 0xf2b632, 1); // ✅ fin
   ring.drawCircle(0, 0, r);
   ring.endFill();
 
   const inner = new PIXI.Graphics();
   inner.beginFill(0x111827, 0.95);
-  inner.lineStyle(4, 0x0ea5e9, 0.25);
+  inner.lineStyle(2, 0x0ea5e9, 0.22);
   inner.drawCircle(0, 0, r * 0.72);
   inner.endFill();
 
@@ -626,26 +625,25 @@ function makeRoundButton(diam) {
     fontFamily: "system-ui",
     fontSize: Math.min(44, diam * 0.26),
     fill: 0xffffff,
-    fontWeight: "900",
+    fontWeight: "1000",
     stroke: 0x000000,
     strokeThickness: 5,
     dropShadow: true,
-    dropShadowAlpha: 0.55,
+    dropShadowAlpha: 0.45,
     dropShadowBlur: 5,
     dropShadowDistance: 2,
-    align: "center", // ✅ important pour multi-ligne
+    align: "center",
   }));
   t.anchor.set(0.5);
 
   c.addChild(ring, inner, t);
-
   c._ring = ring;
   c._inner = inner;
   c._text = t;
 
-  c.on("pointerdown", () => { c.scale.set(0.98); });
-  c.on("pointerup", () => { c.scale.set(1.0); });
-  c.on("pointerupoutside", () => { c.scale.set(1.0); });
+  c.on("pointerdown", () => c.scale.set(0.985));
+  c.on("pointerup", () => c.scale.set(1.0));
+  c.on("pointerupoutside", () => c.scale.set(1.0));
 
   return c;
 }
@@ -665,10 +663,19 @@ function setSpinButtonMode(isStop) {
 }
 
 function refreshSpeedButtonLabel() {
-  if (!hud.btnSpeed || !hud.btnSpeed._text) return;
-  const name = (SPEEDS && SPEEDS[speedIndex]) ? SPEEDS[speedIndex].name : "VIT";
+  if (!hud.btnSpeed) return;
+  const name = SPEEDS?.[speedIndex]?.name || "VIT";
   hud.btnSpeed._text.text = `VIT\n${name}`;
-  hud.btnSpeed._text.style.align = "center"; // ✅ FIX (pas hud.btnSpeed._text.align)
+}
+
+function updateHUDTexts(msg) {
+  const m = (msg || "").toString();
+  if (hud.topText) hud.topText.text = m || "";
+}
+function setCenterStatus(msg) {
+  if (!hud.centerStatus) return;
+  const m = (msg || "").toString();
+  hud.centerStatus.text = m ? m.toUpperCase() : "";
 }
 
 function buildHUD() {
@@ -684,14 +691,14 @@ function buildHUD() {
 
   const safeTop = getSafeTopPx();
 
-  // TOP message
+  // TOP MESSAGE
   const topW = Math.min(w * 0.92, 680);
-  const topH = Math.max(46, Math.round(h * 0.06));
+  const topH = Math.max(44, Math.round(h * 0.055));
   hud.topPanel = makeRoundedPanel(topW, topH, 18);
   hud.topPanel.x = Math.round((w - topW) / 2);
   hud.topPanel.y = safeTop + 8;
 
-  hud.topText = makeLabel("Appuyez sur SPIN pour lancer", Math.round(topH * 0.40));
+  hud.topText = makeLabel("Appuyez sur SPIN pour lancer", Math.round(topH * 0.42));
   hud.topText.anchor.set(0.5);
   hud.topText.x = topW / 2;
   hud.topText.y = topH / 2;
@@ -699,9 +706,9 @@ function buildHUD() {
   hud.topPanel.addChild(hud.topText);
   hud.root.addChild(hud.topPanel);
 
-  // meters sous slot
+  // METERS
   const meterW = Math.min(w * 0.92, 720);
-  const meterH = Math.max(88, Math.round(h * 0.11));
+  const meterH = Math.max(92, Math.round(h * 0.115));
   const meterX = Math.round((w - meterW) / 2);
   const meterY = Math.round(layout.slotY + layout.slotH + layout.framePadY + h * 0.02);
 
@@ -710,52 +717,54 @@ function buildHUD() {
   hud.meterPanel.y = meterY;
   hud.root.addChild(hud.meterPanel);
 
-  const colPad = 14;
-  const colW = (meterW - colPad * 2) / 3;
+  const colW = meterW / 3;
+  const yLabel = Math.round(meterH * 0.18);
+  const yValue = Math.round(meterH * 0.60);
 
-  const soldeLabel = makeLabel("SOLDE", Math.round(meterH * 0.22));
-  soldeLabel.anchor.set(0, 0);
-  soldeLabel.x = colPad + 10;
-  soldeLabel.y = 10;
+  const soldeLabel = makeLabel("SOLDE", Math.round(meterH * 0.20));
+  soldeLabel.anchor.set(0.5, 0.5);
+  soldeLabel.x = Math.round(colW * 0.5);
+  soldeLabel.y = yLabel;
 
-  hud.soldeValue = makeValue("0", Math.round(meterH * 0.30));
-  hud.soldeValue.anchor.set(0, 0);
-  hud.soldeValue.x = colPad + 10;
-  hud.soldeValue.y = soldeLabel.y + soldeLabel.height + 4;
+  hud.soldeValue = makeValue("0", Math.round(meterH * 0.32));
+  hud.soldeValue.anchor.set(0.5, 0.5);
+  hud.soldeValue.x = Math.round(colW * 0.5);
+  hud.soldeValue.y = yValue;
 
   const miseLabel = makeLabel("MISE", Math.round(meterH * 0.18));
-  miseLabel.anchor.set(0, 0);
-  miseLabel.x = colPad + colW - 90;
-  miseLabel.y = 10;
+  miseLabel.anchor.set(0.5, 0.5);
+  miseLabel.x = Math.round(colW * 1.5);
+  miseLabel.y = yLabel;
 
-  hud.miseValue = makeValue("1", Math.round(meterH * 0.24));
-  hud.miseValue.anchor.set(0, 0);
-  hud.miseValue.x = colPad + colW - 90;
-  hud.miseValue.y = miseLabel.y + miseLabel.height + 6;
+  hud.miseValue = makeValue("1", Math.round(meterH * 0.28));
+  hud.miseValue.anchor.set(0.5, 0.5);
+  hud.miseValue.x = Math.round(colW * 1.5);
+  hud.miseValue.y = yValue;
 
-  hud.centerStatus = makeLabel("METTEZ VOTRE MISE", Math.round(meterH * 0.22));
+  const gainLabel = makeLabel("DERNIER GAIN", Math.round(meterH * 0.18));
+  gainLabel.anchor.set(0.5, 0.5);
+  gainLabel.x = Math.round(colW * 2.5);
+  gainLabel.y = yLabel;
+
+  hud.gainValue = makeValue("0", Math.round(meterH * 0.32));
+  hud.gainValue.anchor.set(0.5, 0.5);
+  hud.gainValue.x = Math.round(colW * 2.5);
+  hud.gainValue.y = yValue;
+
+  hud.centerStatus = makeLabel("METTEZ VOTRE MISE", Math.round(meterH * 0.16));
   hud.centerStatus.anchor.set(0.5, 0.5);
-  hud.centerStatus.x = colPad + colW + colW / 2;
-  hud.centerStatus.y = meterH / 2;
-
-  const gainLabel = makeLabel("DERNIER GAIN", Math.round(meterH * 0.22));
-  gainLabel.anchor.set(0, 0);
-  gainLabel.x = colPad + colW * 2 + 10;
-  gainLabel.y = 10;
-
-  hud.gainValue = makeValue("0", Math.round(meterH * 0.30));
-  hud.gainValue.anchor.set(0, 0);
-  hud.gainValue.x = colPad + colW * 2 + 10;
-  hud.gainValue.y = gainLabel.y + gainLabel.height + 4;
+  hud.centerStatus.x = Math.round(meterW / 2);
+  hud.centerStatus.y = Math.round(meterH * 0.88);
+  hud.centerStatus.alpha = 0.85;
 
   hud.meterPanel.addChild(
     soldeLabel, hud.soldeValue,
     miseLabel, hud.miseValue,
-    hud.centerStatus,
-    gainLabel, hud.gainValue
+    gainLabel, hud.gainValue,
+    hud.centerStatus
   );
 
-  // chips
+  // CHIPS
   hud.chips.forEach(c => c.destroy({ children: true }));
   hud.chips = [];
 
@@ -780,17 +789,17 @@ function buildHUD() {
       if (spinning) return;
       bet = v;
       updateHUDNumbers();
+      setCenterStatus("Mettez votre mise");
     });
 
     hud.root.addChild(chip);
     hud.chips.push(chip);
-
     cx += chipW + gap;
   }
 
-  // boutons
+  // BUTTONS
   const spinDiam = Math.round(Math.min(w * 0.30, h * 0.18));
-  const spinY = Math.round(chipsY + chipH + h * 0.07);
+  const spinY = Math.round(chipsY + chipH + h * 0.075);
 
   hud.btnSpin = makeRoundButton(spinDiam);
   hud.btnSpin._text.text = "SPIN";
@@ -798,7 +807,9 @@ function buildHUD() {
   hud.btnSpin.y = spinY;
   hud.root.addChild(hud.btnSpin);
 
-  hud.btnSpin.on("pointerup", () => onSpinOrStop());
+  hud.btnSpin.on("pointerup", () => {
+    if (typeof onSpinOrStop === "function") onSpinOrStop();
+  });
 
   const sideDiam = Math.round(spinDiam * 0.62);
 
@@ -820,19 +831,11 @@ function buildHUD() {
     updateHUDTexts(`Vitesse : ${SPEEDS[speedIndex].name}`);
   });
 
-  hud.btnInfo.on("pointerup", () => {
-    if (typeof togglePaytable === "function") togglePaytable();
-  });
+  hud.btnInfo.on("pointerup", () => togglePaytable());
 
   refreshSpeedButtonLabel();
   updateHUDNumbers();
   setSpinButtonMode(false);
-}
-
-function updateHUDTexts(msg) {
-  const m = (msg || "").toString();
-  if (hud.topText) hud.topText.text = m || "";
-  if (hud.centerStatus) hud.centerStatus.text = m ? m.toUpperCase() : "";
 }
 
 function updateHUDNumbers() {
@@ -843,6 +846,95 @@ function updateHUDNumbers() {
   if (hud.chips && hud.chips.length) {
     hud.chips.forEach((c) => setChipSelected(c, c._value === bet));
   }
+}
+
+// --------------------------------------------------
+// Paytable overlay (simple)
+// --------------------------------------------------
+function togglePaytable(forceVisible) {
+  if (!paytableOverlay) paytableOverlay = createPaytableOverlay();
+  if (typeof forceVisible === "boolean") paytableOverlay.visible = forceVisible;
+  else paytableOverlay.visible = !paytableOverlay.visible;
+}
+
+function createPaytableOverlay() {
+  const w = app.screen.width;
+  const h = app.screen.height;
+
+  const container = new PIXI.Container();
+  container.visible = false;
+  container.interactive = true;
+
+  const backdrop = new PIXI.Graphics();
+  backdrop.beginFill(0x000000, 0.75);
+  backdrop.drawRect(0, 0, w, h);
+  backdrop.endFill();
+  backdrop.interactive = true;
+  container.addChild(backdrop);
+
+  const panelW = w * 0.86;
+  const panelH = h * 0.7;
+  const panelX = (w - panelW) / 2;
+  const panelY = (h - panelH) / 2;
+
+  const panel = new PIXI.Graphics();
+  panel.beginFill(0x111827, 0.95);
+  panel.lineStyle(3, 0xf2b632, 1);
+  panel.drawRoundedRect(panelX, panelY, panelW, panelH, 22);
+  panel.endFill();
+  container.addChild(panel);
+
+  const title = new PIXI.Text("Table des gains", new PIXI.TextStyle({
+    fontFamily: "system-ui",
+    fontSize: Math.round(h * 0.035),
+    fill: 0xffffff,
+    fontWeight: "900",
+  }));
+  title.anchor.set(0.5, 0);
+  title.x = w / 2;
+  title.y = panelY + Math.round(h * 0.02);
+  container.addChild(title);
+
+  const bodyText =
+    "Fruits : 3=2x | 4=3x | 5=4x\n\n" +
+    "Cartes : 3x / 4x / 5x\n" +
+    "Pièce : 4x / 5x / 6x\n" +
+    "Couronne : 10x / 12x / 14x\n" +
+    "BAR : 16x / 18x / 20x\n" +
+    "7 rouge : 20x / 25x / 30x\n" +
+    "77 mauve : 30x / 40x / 50x\n\n" +
+    "WILD : remplace tout sauf BONUS\n" +
+    "BONUS : 3+ => 10 free spins (gains x2)";
+
+  const body = new PIXI.Text(bodyText, new PIXI.TextStyle({
+    fontFamily: "system-ui",
+    fontSize: Math.round(h * 0.024),
+    fill: 0xffffff,
+    wordWrap: true,
+    wordWrapWidth: panelW * 0.80,
+    lineHeight: Math.round(h * 0.03),
+  }));
+  body.anchor.set(0.5, 0);
+  body.x = w / 2;
+  body.y = title.y + title.height + Math.round(h * 0.02);
+  container.addChild(body);
+
+  const close = new PIXI.Text("FERMER", new PIXI.TextStyle({
+    fontFamily: "system-ui",
+    fontSize: Math.round(h * 0.03),
+    fill: 0xffffff,
+    fontWeight: "900",
+  }));
+  close.anchor.set(0.5);
+  close.x = w / 2;
+  close.y = panelY + panelH - Math.round(h * 0.06);
+  close.interactive = true;
+  close.buttonMode = true;
+  close.on("pointerup", () => togglePaytable(false));
+  container.addChild(close);
+
+  app.stage.addChild(container);
+  return container;
 }
 
 // --------------------------------------------------
@@ -919,7 +1011,7 @@ function evaluateGrid(grid, betValue) {
 }
 
 // --------------------------------------------------
-// Highlight (7 sprites => visibles 2..4)
+// Highlight
 // --------------------------------------------------
 function startHighlight(cells) {
   highlightedCells.forEach((cell) => (cell.container.alpha = 1));
@@ -928,8 +1020,8 @@ function startHighlight(cells) {
   cells.forEach(([col, row]) => {
     const reel = reels[col];
     if (!reel) return;
-    const targetIndex = TOP_EXTRA + row; // 2..4
-    const cellObj = reel.symbols[targetIndex];
+    const idx = TOP_EXTRA + row; // visibles 2..4
+    const cellObj = reel.symbols[idx];
     if (cellObj) highlightedCells.push(cellObj);
   });
 
@@ -938,6 +1030,7 @@ function startHighlight(cells) {
 
 function updateHighlight(delta) {
   if (!highlightedCells.length) return;
+
   highlightTimer += delta;
   const alpha = Math.sin(highlightTimer * 0.25) > 0 ? 0.35 : 1.0;
   highlightedCells.forEach((cell) => (cell.container.alpha = alpha));
@@ -950,7 +1043,7 @@ function updateHighlight(delta) {
 }
 
 // --------------------------------------------------
-// Easing
+// Easing / smoothing
 // --------------------------------------------------
 function clamp01(t) { return Math.max(0, Math.min(1, t)); }
 function easeOutCubic(t) { t = clamp01(t); return 1 - Math.pow(1 - t, 3); }
@@ -977,7 +1070,7 @@ function recycleReelOneStepDown(reel, newTopId) {
 }
 
 // --------------------------------------------------
-// STOP pro (synchro)
+// STOP pro (synchro + rapide)
 // --------------------------------------------------
 function requestStop(preset) {
   if (!spinning || stopRequested) return;
@@ -985,6 +1078,7 @@ function requestStop(preset) {
   stopRequested = true;
   stopArmedAt = performance.now();
 
+  // ✅ stop synchro (même moment)
   for (let c = 0; c < reels.length; c++) {
     const r = reels[c];
     const earliest = r.startAt + MIN_SPIN_BEFORE_STOP_MS;
@@ -992,7 +1086,9 @@ function requestStop(preset) {
   }
 
   if (gridArrivedAt) ensurePlansAfterGrid(preset);
+
   updateHUDTexts("STOP…");
+  setCenterStatus("Arrêt…");
 }
 
 // --------------------------------------------------
@@ -1024,15 +1120,13 @@ function prepareReelPlans(now, preset) {
   }
 }
 
-// ✅ IMPORTANT: STOP => settleStart >= now (évite les vitesses folles)
 function ensurePlansAfterGrid(preset) {
   const now = performance.now();
 
   for (let c = 0; c < reels.length; c++) {
     const r = reels[c];
 
-    const needsGridTime = gridArrivedAt ? gridArrivedAt : 0;
-
+    const needsGridTime = gridArrivedAt ? gridArrivedAt : 0; // ✅ synchro
     const normalStopAt = Math.max(r.minStopAt, needsGridTime);
 
     const u = Number.isFinite(r.userStopAt) ? r.userStopAt : now;
@@ -1040,15 +1134,8 @@ function ensurePlansAfterGrid(preset) {
 
     const stopAt = stopRequested ? requestedStopAt : normalStopAt;
 
-    // settleStart
-    let settleStart = stopAt - preset.settleMs;
-
-    // si STOP => on démarre la décélération "maintenant" (propre)
-    if (stopRequested) settleStart = Math.max(now, settleStart);
-
-    // garde-fou
-    settleStart = Math.max(r.startAt + 60, settleStart);
-    r.settleStart = settleStart;
+    r.settleStart = stopAt - preset.settleMs;
+    r.settleStart = Math.max(r.startAt + 80, r.settleStart);
 
     const preBoost = stopRequested ? STOP_PREDECEL_BOOST : 1.0;
     r.preDecelStart = r.settleStart - preset.preDecelMs * preBoost;
@@ -1063,13 +1150,23 @@ function buildSettleQueueForReel(grid, col) {
   return [botId, midId, topId, randomSymbolId()];
 }
 
+function makeRandomGrid() {
+  const g = [];
+  for (let r = 0; r < ROWS; r++) {
+    const row = [];
+    for (let c = 0; c < COLS; c++) row.push(randomSymbolId());
+    g.push(row);
+  }
+  return g;
+}
+
 // --------------------------------------------------
 // Animation (spin -> settle -> snap -> bounce)
 // --------------------------------------------------
 function animateSpinUntilDone(preset) {
   return new Promise((resolve) => {
     let prev = performance.now();
-    const bounceAmp = Math.min(reelStep * preset.bounceAmpFactor, 14);
+    const bounceAmp = Math.min(reelStep * preset.bounceAmpFactor, 12);
 
     function tick(now) {
       const dt = Math.max(0, now - prev);
@@ -1164,7 +1261,7 @@ function animateSpinUntilDone(preset) {
           }
         }
 
-        // BOUNCE
+        // BOUNCE (léger)
         if (r.state === "bounce") {
           const tb = clamp01((now - r.bounceStart) / preset.bounceMs);
           const s = Math.sin(tb * Math.PI);
@@ -1193,7 +1290,6 @@ async function onSpinOrStop() {
   if (spinning) {
     const preset = SPEEDS[speedIndex];
     requestStop(preset);
-    setSpinButtonMode(true);
     return;
   }
 
@@ -1223,6 +1319,7 @@ async function onSpinOrStop() {
   } else {
     if (balance < bet) {
       updateHUDTexts("Solde insuffisant");
+      setCenterStatus("Mise trop élevée");
       spinning = false;
       spinInFlight = false;
       setSpinButtonMode(false);
@@ -1234,10 +1331,16 @@ async function onSpinOrStop() {
   lastWin = 0;
   updateHUDNumbers();
   updateHUDTexts(paidSpin ? "Spin…" : `Free spin… restants : ${freeSpins}`);
+  setCenterStatus("Bonne chance !");
 
   const now = performance.now();
   prepareReelPlans(now, preset);
 
+  // ✅ animation démarre IMMÉDIATEMENT
+  const animPromise = animateSpinUntilDone(preset);
+
+  // fetch en parallèle
+  let resolved = false;
   fetch("/spin", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1248,18 +1351,28 @@ async function onSpinOrStop() {
       pendingGrid = data.result || data.grid || data;
       gridArrivedAt = performance.now();
       ensurePlansAfterGrid(preset);
+      resolved = true;
     })
     .catch((err) => {
       console.error("Erreur API /spin", err);
-      pendingGrid = null;
-      gridArrivedAt = 0;
+      pendingGrid = makeRandomGrid();      // ✅ fallback (pas de blocage)
+      gridArrivedAt = performance.now();
+      ensurePlansAfterGrid(preset);
+      resolved = true;
     });
 
-  while (!pendingGrid) {
+  // sécurité: si API trop lente => fallback après 3.5s
+  const timeoutAt = performance.now() + 3500;
+  while (!resolved && performance.now() < timeoutAt) {
     await new Promise((res) => setTimeout(res, 25));
   }
+  if (!pendingGrid) {
+    pendingGrid = makeRandomGrid();
+    gridArrivedAt = performance.now();
+    ensurePlansAfterGrid(preset);
+  }
 
-  await animateSpinUntilDone(preset);
+  await animPromise;
 
   const { baseWin, winningLines, bonusTriggered } = evaluateGrid(pendingGrid, effectiveBet);
 
@@ -1282,6 +1395,8 @@ async function onSpinOrStop() {
     updateHUDTexts(
       freeSpins > 0 ? `Gain : ${totalWin} — free spins : ${freeSpins}` : `Gain : ${totalWin}`
     );
+    setCenterStatus(freeSpins > 0 ? `Free spins : ${freeSpins}` : "Mettez votre mise");
+
     const cells = [];
     winningLines?.forEach((line) => line.cells.forEach((c) => cells.push(c)));
     if (cells.length) startHighlight(cells);
@@ -1291,20 +1406,13 @@ async function onSpinOrStop() {
         ? `Pas de gain — free spins : ${freeSpins}`
         : "Pas de gain — appuyez sur SPIN"
     );
+    setCenterStatus(freeSpins > 0 ? `Free spins : ${freeSpins}` : "Mettez votre mise");
   }
 
   if (bonusTriggered) {
-    updateHUDTexts("BONUS ! +10 free spins (gains ×2)");
+    updateHUDTexts("BONUS ! +10 free spins (gains x2)");
+    setCenterStatus("BONUS !");
   }
-}
-
-// --------------------------------------------------
-// Paytable (optionnel)
-// Si tu n’as pas encore remis ton overlay, ça évite une erreur au clic INFO.
-// Tu peux remplacer plus tard par ton vrai overlay.
-// --------------------------------------------------
-function togglePaytable() {
-  updateHUDTexts("Paytable: à ajouter (plus tard)");
 }
 
 // --------------------------------------------------
