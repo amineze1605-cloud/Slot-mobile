@@ -18,9 +18,9 @@ PIXI.settings.SCALE_MODE = PIXI.SCALE_MODES.LINEAR;
 const ENABLE_GLOW = false; // garde false pour perf/stabilité (on fera plus tard)
 
 // STOP pro
-const MIN_SPIN_BEFORE_STOP_MS = 380; // mini avant accept stop (look casino)
-const STOP_STAGGER_MS = 130;         // écart entre rouleaux au stop (casino feel)
-const STOP_PREDECEL_BOOST = 0.55;    // <1 => pré-décél plus tôt (stop accélère)
+const MIN_SPIN_BEFORE_STOP_MS = 260; // stop accepté plus vite
+const STOP_STAGGER_MS = 0;           // ✅ tous en même temps
+const STOP_PREDECEL_BOOST = 0.40;    // ✅ décélération plus agressive
 
 // --------------------------------------------------
 // DOM & globales
@@ -802,13 +802,16 @@ function requestStop(preset) {
   stopRequested = true;
   stopArmedAt = performance.now();
 
+  // ✅ STOP global: même moment pour tous
+  const globalStopAt = stopArmedAt;
+
   for (let c = 0; c < reels.length; c++) {
     const r = reels[c];
     const earliest = r.startAt + MIN_SPIN_BEFORE_STOP_MS;
-    r.userStopAt = Math.max(earliest, stopArmedAt + c * STOP_STAGGER_MS);
+    r.userStopAt = Math.max(earliest, globalStopAt);
   }
 
-  // ✅ si la grille est déjà arrivée, on recalc tout de suite
+  // si la grille est déjà arrivée, on recalc tout de suite
   if (gridArrivedAt) ensurePlansAfterGrid(preset);
 
   updateHUDTexts("STOP…");
@@ -851,7 +854,7 @@ function ensurePlansAfterGrid(preset) {
   for (let c = 0; c < reels.length; c++) {
     const r = reels[c];
 
-    const needsGridTime = gridArrivedAt ? (gridArrivedAt + c * 60) : 0;
+    const needsGridTime = gridArrivedAt ? gridArrivedAt : 0; // ✅ stop synchro
 
     const normalStopAt = Math.max(r.minStopAt, needsGridTime);
 
