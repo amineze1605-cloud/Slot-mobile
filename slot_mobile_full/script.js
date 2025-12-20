@@ -40,6 +40,11 @@ let spinInFlight = false;
 let pendingGrid = null;
 let gridArrivedAt = 0;
 
+// STOP pro (rouleau par rouleau)
+let stopArmedAt = 0;
+const STOP_STAGGER_MS = 140;         // délai entre chaque rouleau lors du stop
+const MIN_SPIN_BEFORE_STOP_MS = 420; // anti-stop instantané (rendu pro)
+
 let messageText;
 let statsLabelText;
 let statsValueText;
