@@ -1,6 +1,6 @@
-// script.js — Slot mobile PIXI v5 (5x3)
-// ✅ anti-float front: tout en centimes (int)
-// ✅ utilise résultat serveur: data.winCents / data.bonus / data.winningLines
+// script.js — Slot mobile PIXI v5 (5x3) — PRO CASINO MODE
+// ✅ anti-float front: affichage en centimes (int), aucun calcul de wallet
+// ✅ utilise résultat serveur: data.winCents / data.bonus / data.winningLines + état autoritaire
 // ✅ bande mise: tap = sélection (pas de mouvement), drag, inertia, snap LEFT
 
 PIXI.settings.ROUND_PIXELS = true;
@@ -20,13 +20,12 @@ const ROWS = 3;
 const STRIP_COUNT = 7;
 const TOP_EXTRA = 2;
 
-const PREMIUM77_ID = 0;
 const BONUS_ID = 6;
 const WILD_ID = 9;
 
-// ------------------ état jeu (CENTIMES) ------------------
-let balanceCents = 1000 * 100; // 1000.00€
-let betCents = 10;             // 0.10€
+// ------------------ état affiché (CENTIMES) ------------------
+let balanceCents = 1000 * 100;
+let betCents = 10; // 0.10€
 let lastWinCents = 0;
 
 let spinning = false;
@@ -44,8 +43,8 @@ let spinInFlight = false;
 let pendingGrid = null;
 let gridArrivedAt = 0;
 
-// outcome serveur
-let pendingOutcome = null; // { winCents, bonus, winningLines }
+// outcome serveur complet
+let pendingOutcome = null; // { winCents, bonus, winningLines, balanceCents, freeSpins, winMultiplier, lastWinCents, fair?, error? }
 
 // highlight
 let highlightedCells = [];
@@ -93,6 +92,20 @@ function fmtMoneyFromCents(cents) {
   return (clampInt(cents, -999999999, 999999999) / 100).toFixed(2);
 }
 
+// ------------------ provably fair clientSeed ------------------
+const CLIENT_SEED_KEY = "slotClientSeed";
+function getClientSeed() {
+  let s = localStorage.getItem(CLIENT_SEED_KEY);
+  if (!s) {
+    const arr = new Uint8Array(16);
+    crypto.getRandomValues(arr);
+    s = Array.from(arr).map(b => b.toString(16).padStart(2, "0")).join("");
+    localStorage.setItem(CLIENT_SEED_KEY, s);
+  }
+  return s;
+}
+const clientSeed = getClientSeed();
+
 // ------------------ safe areas ------------------
 function getSafeTopPx() {
   const h = app?.screen?.height || window.innerHeight || 800;
@@ -131,6 +144,29 @@ function loadSpritesheet() {
     };
     img.onerror = (e) => reject(e || new Error("Impossible de charger assets/spritesheet.png"));
   });
+}
+
+// ------------------ sync state serveur ------------------
+async function syncStateFromServer() {
+  try {
+    const r = await fetch("/state", { credentials: "include" });
+    const data = await r.json();
+
+    balanceCents = Number(data.balanceCents) || balanceCents;
+    freeSpins = Number(data.freeSpins) || 0;
+    winMultiplier = Number(data.winMultiplier) || 1;
+    lastWinCents = Number(data.lastWinCents) || 0;
+
+    if (Array.isArray(data.allowedBetsCents) && data.allowedBetsCents.length) {
+      hud.betValuesCents = data.allowedBetsCents.map(n => Math.round(Number(n)));
+      if (!hud.betValuesCents.includes(betCents)) betCents = hud.betValuesCents[0];
+    }
+
+    hudUpdateNumbers();
+    hudUpdateFsBadge();
+  } catch (e) {
+    console.log("syncStateFromServer failed", e);
+  }
 }
 
 // ------------------ init PIXI ------------------
@@ -183,6 +219,9 @@ async function initPixi() {
     buildHUD();
 
     hideMessage();
+
+    await syncStateFromServer(); // ✅ état autoritaire au lancement
+
     hudSetStatusMessage("METTEZ VOTRE MISE, S'IL VOUS PLAÎT");
     hudUpdateFsBadge();
     app.ticker.add(updateHighlight);
@@ -216,6 +255,7 @@ function rebuildAll() {
 
     hudSetStatusMessage(spinning ? "SPIN…" : "METTEZ VOTRE MISE, S'IL VOUS PLAÎT");
     hudUpdateFsBadge();
+    hudUpdateNumbers();
   } catch (e) {
     console.error("Resize rebuild error:", e);
   }
@@ -415,7 +455,6 @@ let hud = {
   betStrip: null,
   betChips: [],
 
-  // ✅ valeurs en CENTIMES (chips)
   betValuesCents: [5, 10, 20, 30, 40, 50, 75, 100, 150, 200],
 
   btnSpin: null,
@@ -576,7 +615,6 @@ function hudSetSpinButtonMode(isStop) {
   }
 }
 
-// VIT: “› › ›”
 function hudRefreshSpeedButtonLabel() {
   const active = Math.min(3, speedIndex + 1);
   const arrows = [0, 1, 2].map(i => (i < active ? "›" : "·")).join(" ");
@@ -656,7 +694,6 @@ function makeBetChip(valueCents, w, h) {
 
   c.addChild(g, eur, val, mise);
   c._bg = g;
-  c._valueText = val;
 
   return c;
 }
@@ -740,7 +777,7 @@ function buildHUD() {
 
   hud.root.addChild(hudBuildBetBand(bandX, bandY, bandW, bandH));
 
-  // panneau bas type capture: solde / message / dernier gain
+  // panneau bas: solde / statut / dernier gain
   const meterW = bandW;
   const meterH = Math.round(Math.max(74, h * 0.090));
   const meterX = bandX;
@@ -766,7 +803,7 @@ function buildHUD() {
   soldeEur.x = 14;
   soldeEur.y = hud.soldeValue.y + hud.soldeValue.height - 2;
 
-  // STATUT (centre)
+  // STATUT
   hud.statusText = new PIXI.Text("METTEZ VOTRE MISE, S'IL VOUS PLAÎT", new PIXI.TextStyle({
     fontFamily: "system-ui",
     fontSize: Math.round(meterH * 0.20),
@@ -848,7 +885,7 @@ function hudUpdateNumbers() {
   }
 }
 
-// ================== BET BAND ==================
+// ================== BET BAND (tap=no move, drag, inertia, snap LEFT) ==================
 function hudSetBetScroll(x) {
   const bandW = hud._betBandW || hud.betBand.width;
   const contentW = hud._betContentW || hud.betStrip.width;
@@ -1022,7 +1059,7 @@ function hudBuildBetBand(x, y, w, h) {
       if (spinning) return;
       const moved = dragEnd();
       if (moved < TAP_THRESHOLD) {
-        betCents = vCents;        // ✅ juste sélectionner
+        betCents = vCents; // ✅ sélectionner seulement
         hudUpdateNumbers();
       }
     });
@@ -1180,6 +1217,7 @@ BONUS : 3+ => 10 free spins (gains x2)`;
   app.stage.addChild(paytableOverlay);
 }
 
+// -------- easing --------
 function clamp01(t) { return Math.max(0, Math.min(1, t)); }
 function easeOutCubic(t) { t = clamp01(t); return 1 - Math.pow(1 - t, 3); }
 function easeInOutQuad(t) {
@@ -1188,6 +1226,7 @@ function easeInOutQuad(t) {
 }
 function smoothFactor(dt, tauMs) { return 1 - Math.exp(-dt / Math.max(1, tauMs)); }
 
+// recycle O(1)
 function recycleReelOneStepDown(reel, newTopId) {
   const s = reel.symbols;
   for (let i = 0; i < s.length; i++) s[i].container.y += reelStep;
@@ -1198,6 +1237,7 @@ function recycleReelOneStepDown(reel, newTopId) {
   s.unshift(bottom);
 }
 
+// applique grille finale
 function applyGridToReels(grid) {
   if (!grid) return;
 
@@ -1211,8 +1251,7 @@ function applyGridToReels(grid) {
     }
 
     for (let row = 0; row < ROWS; row++) {
-      const idx = TOP_EXTRA + row;
-      setCellSymbol(r.symbols[idx], safeId(grid[row][c]));
+      setCellSymbol(r.symbols[TOP_EXTRA + row], safeId(grid[row][c]));
     }
 
     for (let i = 0; i < TOP_EXTRA; i++) setCellSymbol(r.symbols[i], randomSymbolId());
@@ -1224,6 +1263,7 @@ function applyGridToReels(grid) {
   }
 }
 
+// STOP pro (synchro)
 function requestStop(preset) {
   if (!spinning || stopRequested) return;
   stopRequested = true;
@@ -1448,7 +1488,7 @@ function updateHighlight(delta) {
 }
 
 // PAYLINES front (coords [col,row] pour highlight)
-const PAYLINES = [
+const PAYLINES_UI = [
   [[0, 0],[1, 0],[2, 0],[3, 0],[4, 0]],
   [[0, 1],[1, 1],[2, 1],[3, 1],[4, 1]],
   [[0, 2],[1, 2],[2, 2],[3, 2],[4, 2]],
@@ -1480,59 +1520,49 @@ async function onSpinOrStop() {
   highlightedCells.forEach((cell) => (cell.container.alpha = 1));
   highlightedCells = [];
 
-  // reset multiplicateur quand plus de FS
-  if (freeSpins <= 0) winMultiplier = 1;
-
-  const preset = SPEEDS[speedIndex];
-  const paidSpin = freeSpins <= 0;
-
-  // consomme solde / FS
-  if (!paidSpin) {
-    freeSpins--;
-  } else {
-    if (balanceCents < betCents) {
-      hudSetStatusMessage("SOLDE INSUFFISANT");
-      spinning = false;
-      spinInFlight = false;
-      hudSetSpinButtonMode(false);
-      return;
-    }
-    balanceCents -= betCents;
-  }
-
+  hudSetStatusMessage("SPIN…");
   lastWinCents = 0;
   hudUpdateNumbers();
-  hudUpdateFsBadge();
-  hudSetStatusMessage("SPIN…");
 
+  const preset = SPEEDS[speedIndex];
   const now = performance.now();
   prepareReelPlans(now, preset);
 
-  // ✅ on envoie betCents (int) au serveur
+  // ✅ serveur autoritaire
   fetch("/spin", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ betCents }),
+    credentials: "include",
+    body: JSON.stringify({ betCents, clientSeed }),
   })
-    .then((r) => r.json())
+    .then(r => r.json())
     .then((data) => {
-      pendingGrid = data.result || data.grid || data;
+      if (data.error) {
+        pendingOutcome = { error: data.error, ...data };
+        pendingGrid = null;
+        gridArrivedAt = performance.now();
+        ensurePlansAfterGrid(preset);
+        return;
+      }
+
+      pendingGrid = data.result;
       pendingOutcome = {
         winCents: Number(data.winCents) || 0,
         bonus: data.bonus || { freeSpins: 0, multiplier: 1 },
         winningLines: Array.isArray(data.winningLines) ? data.winningLines : [],
+        balanceCents: Number(data.balanceCents),
+        freeSpins: Number(data.freeSpins),
+        winMultiplier: Number(data.winMultiplier),
+        lastWinCents: Number(data.lastWinCents),
+        fair: data.fair,
       };
+
       gridArrivedAt = performance.now();
       ensurePlansAfterGrid(preset);
     })
     .catch(() => {
-      // fallback minimal: pas de win si serveur KO
-      pendingGrid = pendingGrid || [
-        [randomSymbolId(),randomSymbolId(),randomSymbolId(),randomSymbolId(),randomSymbolId()],
-        [randomSymbolId(),randomSymbolId(),randomSymbolId(),randomSymbolId(),randomSymbolId()],
-        [randomSymbolId(),randomSymbolId(),randomSymbolId(),randomSymbolId(),randomSymbolId()],
-      ];
-      pendingOutcome = { winCents: 0, bonus: { freeSpins: 0, multiplier: 1 }, winningLines: [] };
+      pendingOutcome = { error: "NETWORK_ERROR" };
+      pendingGrid = null;
       gridArrivedAt = performance.now();
       ensurePlansAfterGrid(preset);
     });
@@ -1542,30 +1572,29 @@ async function onSpinOrStop() {
   while (!pendingGrid && performance.now() - startWait < 4000) {
     await new Promise((res) => setTimeout(res, 25));
   }
-  if (!pendingGrid) {
-    pendingGrid = [
-      [randomSymbolId(),randomSymbolId(),randomSymbolId(),randomSymbolId(),randomSymbolId()],
-      [randomSymbolId(),randomSymbolId(),randomSymbolId(),randomSymbolId(),randomSymbolId()],
-      [randomSymbolId(),randomSymbolId(),randomSymbolId(),randomSymbolId(),randomSymbolId()],
-    ];
+
+  // si erreur serveur => pas d’animation finale (on coupe propre)
+  if (!pendingGrid || !pendingOutcome || pendingOutcome.error) {
+    spinning = false;
+    spinInFlight = false;
+    hudSetSpinButtonMode(false);
+
+    if (pendingOutcome?.error === "INSUFFICIENT_FUNDS") hudSetStatusMessage("SOLDE INSUFFISANT");
+    else if (pendingOutcome?.error === "BET_NOT_ALLOWED") hudSetStatusMessage("MISE NON AUTORISÉE");
+    else hudSetStatusMessage("ERREUR SERVEUR");
+
+    // resync state au cas où
+    await syncStateFromServer();
+    return;
   }
-  if (!pendingOutcome) pendingOutcome = { winCents: 0, bonus: { freeSpins: 0, multiplier: 1 }, winningLines: [] };
 
   await animateSpinUntilDone(preset);
 
-  // ✅ outcome SERVEUR
-  const winCents = clampInt(pendingOutcome.winCents, 0, 999999999);
-  const bonus = pendingOutcome.bonus || { freeSpins: 0, multiplier: 1 };
-  const winningLines = pendingOutcome.winningLines || [];
-
-  // bonus
-  if ((bonus.freeSpins || 0) > 0) {
-    freeSpins += clampInt(bonus.freeSpins, 0, 9999);
-    winMultiplier = clampInt(bonus.multiplier || 2, 1, 20);
-  }
-
-  lastWinCents = winCents;
-  balanceCents += winCents;
+  // ✅ appliquer l’état autoritaire
+  balanceCents = pendingOutcome.balanceCents;
+  freeSpins = pendingOutcome.freeSpins;
+  winMultiplier = pendingOutcome.winMultiplier;
+  lastWinCents = pendingOutcome.lastWinCents;
 
   spinning = false;
   spinInFlight = false;
@@ -1574,18 +1603,21 @@ async function onSpinOrStop() {
   hudUpdateNumbers();
   hudUpdateFsBadge();
 
-  // status + highlight depuis winningLines serveur
+  const winCents = clampInt(pendingOutcome.winCents, 0, 999999999);
+  const bonus = pendingOutcome.bonus || { freeSpins: 0, multiplier: 1 };
+  const winningLines = pendingOutcome.winningLines || [];
+
+  // status + highlight
   if ((bonus.freeSpins || 0) > 0) {
     hudSetStatusMessage("BONUS ! +10 FREE SPINS (GAINS ×2)");
   } else if (winCents > 0) {
     hudSetStatusMessage("GAIN : " + fmtMoneyFromCents(winCents) + " EUR");
 
-    // highlight: reconstruire cells depuis PAYLINES + count
     const cells = [];
     for (const line of winningLines) {
-      const li = clampInt(line.lineIndex, 0, PAYLINES.length - 1);
+      const li = clampInt(line.lineIndex, 0, PAYLINES_UI.length - 1);
       const cnt = clampInt(line.count, 0, 5);
-      const coords = PAYLINES[li];
+      const coords = PAYLINES_UI[li];
       for (let i = 0; i < Math.min(cnt, coords.length); i++) {
         cells.push(coords[i]);
       }
@@ -1594,6 +1626,9 @@ async function onSpinOrStop() {
   } else {
     hudSetStatusMessage("PAS DE GAIN");
   }
+
+  // (Optionnel) debug provably fair
+  // console.log("FAIR:", pendingOutcome.fair);
 }
 
 // Start
