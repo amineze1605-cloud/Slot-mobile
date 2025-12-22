@@ -4,7 +4,6 @@
 // ✅ Provably fair: serverSeed commit+reveal + clientSeed + nonce
 
 const express = require("express");
-const cors = require("cors");
 const path = require("path");
 const crypto = require("crypto");
 const session = require("express-session");
