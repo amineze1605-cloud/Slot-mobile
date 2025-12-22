@@ -1,7 +1,7 @@
 // server.js — Slot Mobile "Casino mode" (server authoritative)
 // ✅ Solde/FS/multiplicateur/gain gérés serveur (session)
 // ✅ Anti-float: tout en CENTIMES (int)
-// ✅ RNG crypto + provably fair (serverSeed/clientSeed/nonce)
+// ✅ Provably fair: serverSeed commit+reveal + clientSeed + nonce
 
 const express = require("express");
 const cors = require("cors");
@@ -12,7 +12,18 @@ const session = require("express-session");
 const app = express();
 const PORT = process.env.PORT || 10000;
 
-app.use(cors());
+// IMPORTANT (Render/Proxy HTTPS) : permet cookie secure derrière proxy
+app.set("trust proxy", 1);
+
+// Si front + back même domaine -> cors inutile.
+// Je le laisse en "safe" (utile si tu héberges le front ailleurs).
+app.use(
+  cors({
+    origin: true,
+    credentials: true,
+  })
+);
+
 app.use(express.json());
 
 // --------- SESSION (autorité serveur) ----------
@@ -25,7 +36,7 @@ app.use(
     cookie: {
       httpOnly: true,
       sameSite: "lax",
-      secure: process.env.NODE_ENV === "production", // HTTPS en prod
+      secure: process.env.NODE_ENV === "production", // OK avec trust proxy
       maxAge: 1000 * 60 * 60 * 24 * 7, // 7 jours
     },
   })
@@ -68,7 +79,7 @@ const PAYTABLE = {
   8: { 3: 4, 4: 5, 5: 6 },
   5: { 3: 10, 4: 12, 5: 14 },
   2: { 3: 16, 4: 18, 5: 20 },
-  11:{ 3: 20, 4: 25, 5: 30 },
+  11: { 3: 20, 4: 25, 5: 30 },
   0: { 3: 30, 4: 40, 5: 50 },
 };
 
@@ -92,10 +103,8 @@ function newServerSeedHex() {
 
 // Provably fair int in [0, max)
 function pfRandInt(max, serverSeed, clientSeed, nonce, index) {
-  // hash = sha256(serverSeed:clientSeed:nonce:index)
   const h = sha256Hex(`${serverSeed}:${clientSeed}:${nonce}:${index}`);
-  // prendre 8 hex (32 bits) -> uint32
-  const slice = h.slice(0, 8);
+  const slice = h.slice(0, 8); // 32-bit
   const x = parseInt(slice, 16) >>> 0;
   return x % max;
 }
@@ -106,16 +115,30 @@ function initSessionState(req) {
     s.state = {
       balanceCents: 1000 * 100,
       freeSpins: 0,
-      winMultiplier: 1, // 2 pendant FS
+      winMultiplier: 1,
       lastWinCents: 0,
       spinLock: false,
-      nonce: 0,         // incrémenté à chaque spin (provably fair)
+      nonce: 0,
       serverSeed: newServerSeedHex(),
-      serverSeedHash: "", // commit
+      serverSeedHash: "",
     };
     s.state.serverSeedHash = sha256Hex(s.state.serverSeed);
   }
   return s.state;
+}
+
+function publicState(st) {
+  return {
+    balanceCents: st.balanceCents,
+    freeSpins: st.freeSpins,
+    winMultiplier: st.winMultiplier,
+    lastWinCents: st.lastWinCents,
+    allowedBetsCents: ALLOWED_BETS_CENTS,
+    fair: {
+      serverSeedHash: st.serverSeedHash,
+      nonce: st.nonce,
+    },
+  };
 }
 
 // ----------------------------
@@ -199,17 +222,7 @@ function generateGridProvablyFair(serverSeed, clientSeed, nonce) {
 // ----------------------------
 app.get("/state", (req, res) => {
   const st = initSessionState(req);
-  res.json({
-    balanceCents: st.balanceCents,
-    freeSpins: st.freeSpins,
-    winMultiplier: st.winMultiplier,
-    lastWinCents: st.lastWinCents,
-    allowedBetsCents: ALLOWED_BETS_CENTS,
-    fair: {
-      serverSeedHash: st.serverSeedHash, // commit seed courant (à vérifier après reveal)
-      nonce: st.nonce,
-    },
-  });
+  res.json(publicState(st));
 });
 
 // ----------------------------
@@ -224,4 +237,97 @@ app.post("/spin", (req, res) => {
   st.spinLock = true;
 
   try {
-    const body = req
+    const body = req.body || {};
+    const betCents = clampInt(body.betCents, 1, 1_000_000);
+
+    if (!ALLOWED_BETS_CENTS.includes(betCents)) {
+      return res.status(400).json({ error: "BET_NOT_ALLOWED", ...publicState(st) });
+    }
+
+    const clientSeed =
+      typeof body.clientSeed === "string" && body.clientSeed.length >= 6
+        ? body.clientSeed.slice(0, 64)
+        : "default-client-seed";
+
+    // reset multiplier si plus de FS
+    if (st.freeSpins <= 0) st.winMultiplier = 1;
+
+    const paidSpin = st.freeSpins <= 0;
+
+    if (paidSpin) {
+      if (st.balanceCents < betCents) {
+        return res.status(400).json({ error: "INSUFFICIENT_FUNDS", ...publicState(st) });
+      }
+      st.balanceCents -= betCents;
+    } else {
+      st.freeSpins -= 1;
+    }
+
+    st.lastWinCents = 0;
+
+    // provably fair: on utilise serverSeed courant pour CE spin, puis on rotate
+    st.nonce += 1;
+
+    const usedServerSeed = st.serverSeed;
+    const usedServerSeedHash = st.serverSeedHash;
+    const usedNonce = st.nonce;
+
+    const grid = generateGridProvablyFair(usedServerSeed, clientSeed, usedNonce);
+
+    const { baseWinCents, bonusTriggered, winningLines } = evaluateSpinBase(grid, betCents);
+
+    // bonus
+    if (bonusTriggered) {
+      st.freeSpins += 10;
+      st.winMultiplier = 2;
+    }
+
+    const totalWinCents = baseWinCents * (st.winMultiplier > 1 ? st.winMultiplier : 1);
+    st.lastWinCents = totalWinCents;
+    st.balanceCents += totalWinCents;
+
+    // rotate seed (important)
+    st.serverSeed = newServerSeedHex();
+    st.serverSeedHash = sha256Hex(st.serverSeed);
+
+    res.json({
+      result: grid,
+
+      betCents,
+
+      winCents: totalWinCents,
+      win: totalWinCents / 100,
+
+      bonus: { freeSpins: bonusTriggered ? 10 : 0, multiplier: bonusTriggered ? 2 : 1 },
+      winningLines,
+
+      // état autoritaire renvoyé au client
+      balanceCents: st.balanceCents,
+      freeSpins: st.freeSpins,
+      winMultiplier: st.winMultiplier,
+      lastWinCents: st.lastWinCents,
+
+      // provably fair (reveal du seed utilisé + hash du prochain)
+      fair: {
+        clientSeed,
+        nonce: usedNonce,
+        serverSeedReveal: usedServerSeed,
+        serverSeedHash: usedServerSeedHash,
+        nextServerSeedHash: st.serverSeedHash,
+      },
+    });
+  } finally {
+    st.spinLock = false;
+  }
+});
+
+// ----------------------------
+// Fallback index.html
+// ----------------------------
+app.get("*", (req, res) => {
+  res.sendFile(path.join(__dirname, "slot_mobile_full", "index.html"));
+});
+
+app.listen(PORT, () => {
+  console.log(`Slot mobile backend running on port ${PORT}`);
+});
