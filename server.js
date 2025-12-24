@@ -1,8 +1,11 @@
-// server.js — Slot Mobile "Casino mode" (server authoritative)
-// ✅ Solde/FS/multiplicateur/gain gérés serveur (session)
-// ✅ Anti-float: tout en CENTIMES (int)
-// ✅ Provably fair: serverSeed commit+reveal + clientSeed + nonce
-// ✅ Sessions robustes en prod via Redis (Render Key-Value) si REDIS_URL est défini
+// server.js — Slot Mobile (server authoritative)
+// - Solde/FS/multiplicateur/gain gérés serveur (session)
+// - Anti-float: tout en CENTIMES (int)
+// - Provably fair: serverSeed commit+reveal + clientSeed + nonce
+// - Sessions: Redis si REDIS_URL fourni, sinon MemoryStore (warning)
+// - /health pour debug Render
+
+"use strict";
 
 const express = require("express");
 const path = require("path");
@@ -10,58 +13,20 @@ const crypto = require("crypto");
 const session = require("express-session");
 const cors = require("cors");
 
-// Redis session store (optionnel mais recommandé en prod)
-let RedisStore = null;
-let createClient = null;
-try {
-  RedisStore = require("connect-redis").RedisStore;
-  createClient = require("redis").createClient;
-} catch (e) {
-  // Si pas installé, on reste sur MemoryStore
-}
-
-const app = express();
-const PORT = process.env.PORT || 10000;
-
-const isProd = process.env.NODE_ENV === "production";
-
-// IMPORTANT (Render/Proxy HTTPS) : permet cookie secure derrière proxy
-app.set("trust proxy", 1);
+let redisClient = null;
+let usingRedis = false;
 
 // ----------------------------
-// CORS (optionnel)
-// - Si tu sers front+back sur le même domaine (ton cas: slot-mobile.onrender.com), tu peux ne PAS mettre CORS.
-// - Si un jour tu mets un front ailleurs, mets CORS_ORIGIN=https://ton-front.com
+// CONFIG
 // ----------------------------
-const corsOriginEnv = (process.env.CORS_ORIGIN || "").trim();
-if (corsOriginEnv) {
-  const allowed = corsOriginEnv
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
+const PORT = Number(process.env.PORT || 10000);
+const FRONT_DIR = path.join(__dirname, "slot_mobile_full");
 
-  app.use(
-    cors({
-      origin: function (origin, cb) {
-        // requêtes sans origin (curl, same-origin) => OK
-        if (!origin) return cb(null, true);
-        if (allowed.includes(origin)) return cb(null, true);
-        return cb(new Error("Not allowed by CORS"));
-      },
-      credentials: true,
-    })
-  );
-}
-
-app.use(express.json());
+const SESSION_SECRET = process.env.SESSION_SECRET || "CHANGE_ME_IN_PROD";
+const REDIS_URL = process.env.REDIS_URL || "";
 
 // ----------------------------
-// Serve frontend (ton dossier)
-// ----------------------------
-app.use(express.static(path.join(__dirname, "slot_mobile_full")));
-
-// ----------------------------
-// CONSTANTES SLOT
+// SLOT CONSTANTES
 // ----------------------------
 const ROWS = 3;
 const COLS = 5;
@@ -74,11 +39,11 @@ const ALLOWED_BETS_CENTS = [5, 10, 20, 30, 40, 50, 75, 100, 150, 200];
 
 // 5 lignes : indices [row, col]
 const PAYLINES = [
-  [[0, 0],[0, 1],[0, 2],[0, 3],[0, 4]],
-  [[1, 0],[1, 1],[1, 2],[1, 3],[1, 4]],
-  [[2, 0],[2, 1],[2, 2],[2, 3],[2, 4]],
-  [[0, 0],[1, 1],[2, 2],[1, 3],[0, 4]],
-  [[2, 0],[1, 1],[0, 2],[1, 3],[2, 4]],
+  [[0, 0], [0, 1], [0, 2], [0, 3], [0, 4]],
+  [[1, 0], [1, 1], [1, 2], [1, 3], [1, 4]],
+  [[2, 0], [2, 1], [2, 2], [2, 3], [2, 4]],
+  [[0, 0], [1, 1], [2, 2], [1, 3], [0, 4]],
+  [[2, 0], [1, 1], [0, 2], [1, 3], [2, 4]],
 ];
 
 // Multiplicateurs (int)
@@ -86,13 +51,13 @@ const PAYTABLE = {
   1: { 3: 2, 4: 3, 5: 4 },
   3: { 3: 2, 4: 3, 5: 4 },
   7: { 3: 2, 4: 3, 5: 4 },
-  10:{ 3: 2, 4: 3, 5: 4 },
+  10: { 3: 2, 4: 3, 5: 4 },
 
   4: { 3: 3, 4: 4, 5: 5 },
   8: { 3: 4, 4: 5, 5: 6 },
   5: { 3: 10, 4: 12, 5: 14 },
   2: { 3: 16, 4: 18, 5: 20 },
-  11:{ 3: 20, 4: 25, 5: 30 },
+  11: { 3: 20, 4: 25, 5: 30 },
   0: { 3: 30, 4: 40, 5: 50 },
 };
 
@@ -147,7 +112,10 @@ function publicState(st) {
     winMultiplier: st.winMultiplier,
     lastWinCents: st.lastWinCents,
     allowedBetsCents: ALLOWED_BETS_CENTS,
-    fair: { serverSeedHash: st.serverSeedHash, nonce: st.nonce },
+    fair: {
+      serverSeedHash: st.serverSeedHash,
+      nonce: st.nonce,
+    },
   };
 }
 
@@ -228,167 +196,223 @@ function generateGridProvablyFair(serverSeed, clientSeed, nonce) {
 }
 
 // ----------------------------
-// API : état serveur
+// Redis store (optionnel)
 // ----------------------------
-app.get("/state", (req, res) => {
-  const st = initSessionState(req);
-  res.json(publicState(st));
-});
+function getRedisStoreCtor(mod) {
+  // connect-redis peut exporter default / RedisStore / function
+  if (typeof mod === "function") return mod;
+  if (mod && typeof mod.default === "function") return mod.default;
+  if (mod && typeof mod.RedisStore === "function") return mod.RedisStore;
+  return null;
+}
 
-// ----------------------------
-// Endpoint SPIN (autoritaire)
-// ----------------------------
-app.post("/spin", (req, res) => {
-  const st = initSessionState(req);
+async function initRedisSessionStore() {
+  if (!REDIS_URL) return null;
 
-  if (st.spinLock) {
-    return res.status(429).json({ error: "SPIN_IN_PROGRESS", ...publicState(st) });
+  const { createClient } = require("redis");
+  const connectRedis = require("connect-redis");
+  const RedisStore = getRedisStoreCtor(connectRedis);
+
+  if (!RedisStore) {
+    console.warn("[REDIS] connect-redis export not found (version mismatch). Falling back to MemoryStore.");
+    return null;
   }
-  st.spinLock = true;
+
+  redisClient = createClient({ url: REDIS_URL });
+
+  redisClient.on("error", (err) => {
+    console.error("[REDIS] error:", err?.message || err);
+  });
 
   try {
-    const body = req.body || {};
-    const betCents = clampInt(body.betCents, 1, 1_000_000);
-
-    if (!ALLOWED_BETS_CENTS.includes(betCents)) {
-      return res.status(400).json({ error: "BET_NOT_ALLOWED", ...publicState(st) });
-    }
-
-    const clientSeed =
-      typeof body.clientSeed === "string" && body.clientSeed.length >= 6
-        ? body.clientSeed.slice(0, 64)
-        : "default-client-seed";
-
-    // reset multiplier si plus de FS
-    if (st.freeSpins <= 0) st.winMultiplier = 1;
-
-    const paidSpin = st.freeSpins <= 0;
-
-    if (paidSpin) {
-      if (st.balanceCents < betCents) {
-        return res.status(400).json({ error: "INSUFFICIENT_FUNDS", ...publicState(st) });
-      }
-      st.balanceCents -= betCents;
-    } else {
-      st.freeSpins -= 1;
-    }
-
-    st.lastWinCents = 0;
-
-    // provably fair: on utilise serverSeed courant pour CE spin, puis on rotate
-    st.nonce += 1;
-
-    const usedServerSeed = st.serverSeed;
-    const usedServerSeedHash = st.serverSeedHash;
-    const usedNonce = st.nonce;
-
-    const grid = generateGridProvablyFair(usedServerSeed, clientSeed, usedNonce);
-    const { baseWinCents, bonusTriggered, winningLines } = evaluateSpinBase(grid, betCents);
-
-    // bonus
-    if (bonusTriggered) {
-      st.freeSpins += 10;
-      st.winMultiplier = 2;
-    }
-
-    const totalWinCents = baseWinCents * (st.winMultiplier > 1 ? st.winMultiplier : 1);
-    st.lastWinCents = totalWinCents;
-    st.balanceCents += totalWinCents;
-
-    // rotate seed (important)
-    st.serverSeed = newServerSeedHex();
-    st.serverSeedHash = sha256Hex(st.serverSeed);
-
-    res.json({
-      result: grid,
-
-      betCents,
-
-      winCents: totalWinCents,
-      win: totalWinCents / 100,
-
-      bonus: { freeSpins: bonusTriggered ? 10 : 0, multiplier: bonusTriggered ? 2 : 1 },
-      winningLines,
-
-      // état autoritaire renvoyé au client
-      balanceCents: st.balanceCents,
-      freeSpins: st.freeSpins,
-      winMultiplier: st.winMultiplier,
-      lastWinCents: st.lastWinCents,
-
-      // provably fair (reveal du seed utilisé + hash du prochain)
-      fair: {
-        clientSeed,
-        nonce: usedNonce,
-        serverSeedReveal: usedServerSeed,
-        serverSeedHash: usedServerSeedHash,
-        nextServerSeedHash: st.serverSeedHash,
-      },
+    await redisClient.connect();
+    usingRedis = true;
+    console.log("[REDIS] connected");
+    return new RedisStore({
+      client: redisClient,
+      prefix: "slot:",
+      // ttl géré par cookie maxAge généralement, mais ok comme ça
     });
-  } finally {
-    st.spinLock = false;
+  } catch (e) {
+    console.error("[REDIS] connect failed, fallback MemoryStore:", e?.message || e);
+    usingRedis = false;
+    return null;
   }
-});
+}
 
 // ----------------------------
-// Fallback index.html
+// Bootstrap server
 // ----------------------------
-app.get("*", (req, res) => {
-  res.sendFile(path.join(__dirname, "slot_mobile_full", "index.html"));
-});
+async function main() {
+  const app = express();
 
-// ----------------------------
-// SESSION MIDDLEWARE + START SERVER
-// (on le fait ici en async pour que Redis soit prêt)
-// ----------------------------
-async function start() {
-  let store = undefined;
+  // Render/Proxy HTTPS : cookies secure + req.secure correct
+  app.set("trust proxy", 1);
 
-  if (RedisStore && createClient && process.env.REDIS_URL) {
-    const redisClient = createClient({ url: process.env.REDIS_URL });
+  // CORS : OK même si front/back même domaine (ça ne casse pas)
+  app.use(cors({ origin: true, credentials: true }));
 
-    redisClient.on("error", (err) => {
-      console.error("Redis error:", err);
-    });
+  app.use(express.json({ limit: "128kb" }));
 
-    try {
-      await redisClient.connect();
-      store = new RedisStore({
-        client: redisClient,
-        prefix: "slot:sess:",
-      });
-      console.log("✅ Redis session store enabled");
-    } catch (e) {
-      console.error("❌ Redis connect failed, fallback MemoryStore:", e);
-    }
+  // Session store
+  const store = await initRedisSessionStore();
+
+  if (!process.env.SESSION_SECRET) {
+    console.warn("[SESSION] WARNING: SESSION_SECRET not set. Set it on Render.");
+  }
+  if (!store) {
+    console.warn("[SESSION] Using MemoryStore (NOT recommended in production).");
   } else {
-    if (isProd) {
-      console.warn("⚠️ REDIS_URL absent: sessions en MemoryStore (pas idéal en prod).");
-    }
+    console.log("[SESSION] Redis session store enabled ✅");
   }
 
   app.use(
     session({
       name: "slot.sid",
-      store, // undefined => MemoryStore
-      secret: process.env.SESSION_SECRET || "CHANGE_ME_IN_PROD",
+      store: store || undefined,
+      secret: SESSION_SECRET,
       resave: false,
       saveUninitialized: false,
+      rolling: true,
       cookie: {
         httpOnly: true,
         sameSite: "lax",
-        secure: isProd, // OK avec trust proxy
+        secure: "auto", // mieux derrière proxy/https
         maxAge: 1000 * 60 * 60 * 24 * 7, // 7 jours
       },
     })
   );
+
+  // Serve frontend
+  app.use(express.static(FRONT_DIR));
+
+  // Health
+  app.get("/health", (req, res) => {
+    res.json({
+      ok: true,
+      usingRedis,
+      hasRedisUrl: Boolean(REDIS_URL),
+      hasSessionSecret: Boolean(process.env.SESSION_SECRET),
+    });
+  });
+
+  // API: état serveur
+  app.get("/state", (req, res) => {
+    const st = initSessionState(req);
+    res.json(publicState(st));
+  });
+
+  // Endpoint SPIN (autoritaire)
+  app.post("/spin", (req, res) => {
+    const st = initSessionState(req);
+
+    if (st.spinLock) {
+      return res.status(429).json({ error: "SPIN_IN_PROGRESS", ...publicState(st) });
+    }
+    st.spinLock = true;
+
+    try {
+      const body = req.body || {};
+      const betCents = clampInt(body.betCents, 1, 1_000_000);
+
+      if (!ALLOWED_BETS_CENTS.includes(betCents)) {
+        return res.status(400).json({ error: "BET_NOT_ALLOWED", ...publicState(st) });
+      }
+
+      const clientSeed =
+        typeof body.clientSeed === "string" && body.clientSeed.length >= 6
+          ? body.clientSeed.slice(0, 64)
+          : "default-client-seed";
+
+      // reset multiplier si plus de FS
+      if (st.freeSpins <= 0) st.winMultiplier = 1;
+
+      const paidSpin = st.freeSpins <= 0;
+
+      if (paidSpin) {
+        if (st.balanceCents < betCents) {
+          return res.status(400).json({ error: "INSUFFICIENT_FUNDS", ...publicState(st) });
+        }
+        st.balanceCents -= betCents;
+      } else {
+        st.freeSpins -= 1;
+      }
+
+      st.lastWinCents = 0;
+
+      // provably fair: on utilise serverSeed courant pour CE spin, puis on rotate
+      st.nonce += 1;
+
+      const usedServerSeed = st.serverSeed;
+      const usedServerSeedHash = st.serverSeedHash;
+      const usedNonce = st.nonce;
+
+      const grid = generateGridProvablyFair(usedServerSeed, clientSeed, usedNonce);
+      const { baseWinCents, bonusTriggered, winningLines } = evaluateSpinBase(grid, betCents);
+
+      if (bonusTriggered) {
+        st.freeSpins += 10;
+        st.winMultiplier = 2;
+      }
+
+      const totalWinCents = baseWinCents * (st.winMultiplier > 1 ? st.winMultiplier : 1);
+      st.lastWinCents = totalWinCents;
+      st.balanceCents += totalWinCents;
+
+      // rotate seed (important)
+      st.serverSeed = newServerSeedHex();
+      st.serverSeedHash = sha256Hex(st.serverSeed);
+
+      res.json({
+        result: grid,
+        betCents,
+        winCents: totalWinCents,
+        win: totalWinCents / 100,
+        bonus: { freeSpins: bonusTriggered ? 10 : 0, multiplier: bonusTriggered ? 2 : 1 },
+        winningLines,
+
+        // état autoritaire
+        balanceCents: st.balanceCents,
+        freeSpins: st.freeSpins,
+        winMultiplier: st.winMultiplier,
+        lastWinCents: st.lastWinCents,
+
+        // provably fair
+        fair: {
+          clientSeed,
+          nonce: usedNonce,
+          serverSeedReveal: usedServerSeed,
+          serverSeedHash: usedServerSeedHash,
+          nextServerSeedHash: st.serverSeedHash,
+        },
+      });
+    } catch (e) {
+      console.error("[/spin] error:", e?.stack || e);
+      res.status(500).json({ error: "SERVER_ERROR" });
+    } finally {
+      st.spinLock = false;
+    }
+  });
+
+  // Fallback index.html
+  app.get("*", (req, res) => {
+    res.sendFile(path.join(FRONT_DIR, "index.html"));
+  });
 
   app.listen(PORT, () => {
     console.log(`Slot mobile backend running on port ${PORT}`);
   });
 }
 
-start().catch((e) => {
-  console.error("Fatal start error:", e);
+// Safe shutdown
+process.on("unhandledRejection", (err) => {
+  console.error("[FATAL] unhandledRejection:", err);
+});
+process.on("uncaughtException", (err) => {
+  console.error("[FATAL] uncaughtException:", err);
+});
+
+main().catch((e) => {
+  console.error("[BOOT] failed:", e?.stack || e);
   process.exit(1);
 });
