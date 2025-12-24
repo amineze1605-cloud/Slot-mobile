@@ -2,11 +2,10 @@
 // ✅ anti-float front: affichage en centimes (int), aucun calcul de wallet
 // ✅ utilise résultat serveur: data.winCents / data.bonus / data.winningLines + état autoritaire
 // ✅ bande mise: tap = sélection (pas de mouvement), drag, inertia, snap LEFT
-// ✅ + AbortController timeout client /spin (timeout réel côté client)
-// ✅ + anti double-tap iOS sur START
-// ✅ + START sur pointerdown / STOP sur pointerup (anti ghost tap)
+// ✅ + AbortController timeout client /spin
+// ✅ + anti double-tap iOS sur SPIN (start only)
 // ✅ + lock visuel + lock input bande mise pendant spin
-// ✅ + validation grid serveur (évite “résultat incomplet” => crash)
+// ✅ + MAX_WAIT clair + arrêt propre si timeout/erreur (évite spin bloqué)
 
 PIXI.settings.ROUND_PIXELS = true;
 PIXI.settings.MIPMAP_TEXTURES = PIXI.MIPMAP_MODES.OFF;
@@ -97,21 +96,6 @@ function fmtMoneyFromCents(cents) {
   return (clampInt(cents, -999999999, 999999999) / 100).toFixed(2);
 }
 
-// ------------------ iOS ghost-tap guard (évite STOP immédiat après START) ------------------
-let spinStartedAt = 0;
-const IGNORE_STOP_AFTER_START_MS = 220;
-
-// ------------------ validation résultat serveur ------------------
-function isValidGrid(grid) {
-  return Array.isArray(grid) &&
-    grid.length === ROWS &&
-    grid.every(row =>
-      Array.isArray(row) &&
-      row.length === COLS &&
-      row.every(v => Number.isFinite(Number(v)))
-    );
-}
-
 // ------------------ provably fair clientSeed ------------------
 const CLIENT_SEED_KEY = "slotClientSeed";
 function getClientSeed() {
@@ -153,7 +137,8 @@ function hideMessage() {
 }
 
 // ------------------ AbortController fetch timeout (réel côté client) ------------------
-const SPIN_REQUEST_TIMEOUT_MS = 3200;
+const SPIN_REQUEST_TIMEOUT_MS = 3200;                 // timeout fetch (AbortController)
+const SPIN_MAX_WAIT_MS = SPIN_REQUEST_TIMEOUT_MS + 900; // 🔥 MAX WAIT UI (arrêt propre si serveur ne répond pas)
 
 async function fetchJsonWithTimeout(url, fetchOpts = {}, timeoutMs = 3000) {
   const controller = new AbortController();
@@ -176,7 +161,7 @@ async function fetchJsonWithTimeout(url, fetchOpts = {}, timeoutMs = 3000) {
   }
 }
 
-// ------------------ anti double-tap iOS sur START ------------------
+// ------------------ anti double-tap iOS sur SPIN (start only) ------------------
 let lastSpinStartTapAt = 0;
 const SPIN_START_COOLDOWN_MS = 280;
 
@@ -290,7 +275,6 @@ async function initPixi() {
     buildHUD();
 
     hideMessage();
-
     await syncStateFromServer();
 
     hudSetStatusMessage(freeSpins > 0 ? "FREE SPINS !" : "METTEZ VOTRE MISE, S'IL VOUS PLAÎT");
@@ -414,6 +398,19 @@ function setCellSymbol(cellObj, symbolId) {
   const sid = safeId(symbolId);
   cellObj.symbolId = sid;
   cellObj.main.texture = symbolTextures[sid];
+}
+
+function isValidGrid(g) {
+  return (
+    Array.isArray(g) &&
+    g.length === ROWS &&
+    g.every(row => Array.isArray(row) && row.length === COLS)
+  );
+}
+function makeFallbackGrid() {
+  return Array.from({ length: ROWS }, () =>
+    Array.from({ length: COLS }, () => randomSymbolId())
+  );
 }
 
 // ---------- slot scene ----------
@@ -719,6 +716,7 @@ function hudUpdateFsBadge() {
 function hudUpdateNumbers() {
   if (hud.soldeValue) hud.soldeValue.text = fmtMoneyFromCents(balanceCents);
   if (hud.gainValue) hud.gainValue.text = fmtMoneyFromCents(lastWinCents);
+
   if (hud.betChips?.length) {
     hud.betChips.forEach((c) => setChipSelected(c, c._valueCents === betCents));
   }
@@ -797,7 +795,6 @@ function makeBetChip(valueCents, w, h) {
 
   c.addChild(g, eur, val, mise);
   c._bg = g;
-
   return c;
 }
 
@@ -825,7 +822,6 @@ function makeActionChip(label, w, h) {
   c.addChild(g, t);
   c._bg = g;
   c._text = t;
-
   return c;
 }
 
@@ -947,14 +943,11 @@ function buildHUD() {
   hud.btnSpin.y = spinY;
   hud.root.addChild(hud.btnSpin);
 
-  // ✅ START sur pointerdown / STOP sur pointerup (anti ghost tap)
-  hud.btnSpin.on("pointerdown", (e) => {
-    e?.stopPropagation?.();
-    onSpinOrStop("start");
-  });
+  // ✅ anti double-tap iOS + stopPropagation (évite event fantôme)
+  hud.btnSpin.on("pointerdown", (e) => { e?.stopPropagation?.(); });
   hud.btnSpin.on("pointerup", (e) => {
     e?.stopPropagation?.();
-    onSpinOrStop("stop");
+    onSpinOrStop();
   });
   hud.btnSpin.on("pointerupoutside", (e) => { e?.stopPropagation?.(); });
 
@@ -993,14 +986,14 @@ function buildHUD() {
 
 // ================== BET BAND (tap=no move, drag, inertia, snap LEFT) ==================
 function hudSetBetScroll(x) {
-  const bandW = hud._betBandW || hud.betBand.width;
-  const contentW = hud._betContentW || hud.betStrip.width;
+  const bandW = hud._betBandW || 0;
+  const contentW = hud._betContentW || 0;
 
   const minX = Math.min(0, bandW - contentW);
   const maxX = 0;
 
   hud._betScrollX = Math.max(minX, Math.min(maxX, x));
-  hud.betStrip.x = hud._betScrollX;
+  if (hud.betStrip) hud.betStrip.x = hud._betScrollX;
 }
 
 function hudStopBetInertia() { hud._betInertiaRunning = false; hud._betVel = 0; }
@@ -1023,7 +1016,8 @@ function hudSnapBetToLeftSmooth(ms = 200) {
   if (!hud.betChips?.length) return;
 
   const leftPad = hud._betLeftPad ?? 16;
-  const bandW = hud._betBandW || hud.betBand.width;
+  const bandW = hud._betBandW || 0;
+
   if ((hud._betContentW || 0) <= bandW) return;
 
   let best = null;
@@ -1509,8 +1503,11 @@ function animateSpinUntilDone(preset) {
 
           if (r.settleIdx >= r.settleQueue.length) {
             if (!r.finalApplied && pendingGrid) {
+              // anti “swap visible” : n’applique que si mismatch
               for (let row = 0; row < ROWS; row++) {
-                setCellSymbol(r.symbols[TOP_EXTRA + row], safeId(pendingGrid[row][c]));
+                const targetId = safeId(pendingGrid[row][c]);
+                const cell = r.symbols[TOP_EXTRA + row];
+                if (cell && cell.symbolId !== targetId) setCellSymbol(cell, targetId);
               }
               r.finalApplied = true;
             }
@@ -1602,27 +1599,21 @@ const PAYLINES_UI = [
   [[0, 2],[1, 1],[2, 0],[3, 1],[4, 2]],
 ];
 
-async function onSpinOrStop(action = "auto") {
-  // STOP demandé explicitement (ou auto si spinning)
-  if (action === "stop" || (action === "auto" && spinning)) {
-    const now = performance.now();
-    if (now - spinStartedAt < IGNORE_STOP_AFTER_START_MS) return;
-
+async function onSpinOrStop() {
+  // STOP réactif : pas de cooldown ici
+  if (spinning) {
     requestStop(SPEEDS[speedIndex]);
-    hudSetSpinButtonMode(true);
     return;
   }
 
-  // START demandé
-  if (action !== "start" && action !== "auto") return;
-
+  // ✅ anti double-tap iOS sur START uniquement
   if (!canStartSpinNow()) return;
+
   if (spinInFlight) return;
   if (!app || !symbolTextures.length) return;
 
   spinInFlight = true;
   spinning = true;
-  spinStartedAt = performance.now();
   stopRequested = false;
   stopArmedAt = 0;
 
@@ -1639,12 +1630,25 @@ async function onSpinOrStop(action = "auto") {
   lastWinCents = 0;
   hudUpdateNumbers();
 
+  // ✅ lock visuel + input bet band pendant le spin
   hudSetBetBandLocked(true);
 
   const preset = SPEEDS[speedIndex];
   const now = performance.now();
   prepareReelPlans(now, preset);
 
+  // 🔥 Timer MAX_WAIT : si le serveur ne répond pas, on force un arrêt propre
+  const forceStopTimer = setTimeout(() => {
+    if (!pendingGrid) {
+      pendingOutcome = pendingOutcome || { error: "TIMEOUT" };
+      pendingOutcome.error = pendingOutcome.error || "TIMEOUT";
+      pendingGrid = makeFallbackGrid();
+      gridArrivedAt = performance.now();
+      ensurePlansAfterGrid(preset);
+    }
+  }, SPIN_MAX_WAIT_MS);
+
+  // ✅ /spin avec AbortController timeout réel
   (async () => {
     const data = await fetchJsonWithTimeout(
       "/spin",
@@ -1657,17 +1661,20 @@ async function onSpinOrStop(action = "auto") {
       SPIN_REQUEST_TIMEOUT_MS
     );
 
-    if (data.error) {
+    // si déjà forcé par MAX_WAIT, on ignore (évite double apply)
+    if (pendingOutcome?.error === "TIMEOUT" && pendingGrid) return;
+
+    if (data?.error) {
       pendingOutcome = { error: data.error, ...data };
-      pendingGrid = null;
+      pendingGrid = makeFallbackGrid();          // ✅ permet d’arrêter l’animation proprement
       gridArrivedAt = performance.now();
       ensurePlansAfterGrid(preset);
       return;
     }
 
-    if (!isValidGrid(data.result)) {
+    if (!isValidGrid(data?.result)) {
       pendingOutcome = { error: "SERVER_ERROR" };
-      pendingGrid = null;
+      pendingGrid = makeFallbackGrid();
       gridArrivedAt = performance.now();
       ensurePlansAfterGrid(preset);
       return;
@@ -1689,42 +1696,36 @@ async function onSpinOrStop(action = "auto") {
     ensurePlansAfterGrid(preset);
   })();
 
-  const MAX_WAIT_MS = SPIN_REQUEST_TIMEOUT_MS + 600;
+  // ✅ on lance l’animation tout de suite (elle attend la grille pour “settle”)
+  await animateSpinUntilDone(preset);
+  clearTimeout(forceStopTimer);
 
-  const startWait = performance.now();
-  while (!pendingGrid && !pendingOutcome?.error && performance.now() - startWait < MAX_WAIT_MS) {
-    await new Promise((res) => setTimeout(res, 25));
-  }
+  // fin spin
+  spinning = false;
+  spinInFlight = false;
+  hudSetSpinButtonMode(false);
 
-  if (!pendingGrid || !pendingOutcome || pendingOutcome.error) {
-    spinning = false;
-    spinInFlight = false;
-    hudSetSpinButtonMode(false);
+  // ✅ unlock bet band
+  hudSetBetBandLocked(false);
 
-    hudSetBetBandLocked(false);
-
-    if (pendingOutcome?.error === "INSUFFICIENT_FUNDS") hudSetStatusMessage("SOLDE INSUFFISANT");
-    else if (pendingOutcome?.error === "BET_NOT_ALLOWED") hudSetStatusMessage("MISE NON AUTORISÉE");
-    else if (pendingOutcome?.error === "TIMEOUT") hudSetStatusMessage("TIMEOUT RÉSEAU");
-    else if (pendingOutcome?.error === "NETWORK_ERROR") hudSetStatusMessage("ERREUR RÉSEAU");
+  // erreur => message + resync state
+  if (!pendingOutcome || pendingOutcome.error) {
+    const err = pendingOutcome?.error || "SERVER_ERROR";
+    if (err === "INSUFFICIENT_FUNDS") hudSetStatusMessage("SOLDE INSUFFISANT");
+    else if (err === "BET_NOT_ALLOWED") hudSetStatusMessage("MISE NON AUTORISÉE");
+    else if (err === "TIMEOUT") hudSetStatusMessage("TIMEOUT RÉSEAU");
+    else if (err === "NETWORK_ERROR") hudSetStatusMessage("ERREUR RÉSEAU");
     else hudSetStatusMessage("ERREUR SERVEUR");
 
     await syncStateFromServer({ clearError: false });
     return;
   }
 
-  await animateSpinUntilDone(preset);
-
-  balanceCents = pendingOutcome.balanceCents;
-  freeSpins = pendingOutcome.freeSpins;
-  winMultiplier = pendingOutcome.winMultiplier;
-  lastWinCents = pendingOutcome.lastWinCents;
-
-  spinning = false;
-  spinInFlight = false;
-  hudSetSpinButtonMode(false);
-
-  hudSetBetBandLocked(false);
+  // appliquer état autoritaire
+  if (Number.isFinite(pendingOutcome.balanceCents)) balanceCents = pendingOutcome.balanceCents;
+  freeSpins = Number(pendingOutcome.freeSpins) || 0;
+  winMultiplier = Number(pendingOutcome.winMultiplier) || 1;
+  lastWinCents = Number(pendingOutcome.lastWinCents) || 0;
 
   hudUpdateNumbers();
   hudUpdateFsBadge();
