@@ -2,6 +2,7 @@
 // ✅ Solde/FS/multiplicateur/gain gérés serveur (session)
 // ✅ Anti-float: tout en CENTIMES (int)
 // ✅ Provably fair: serverSeed commit+reveal + clientSeed + nonce
+// ✅ Sessions prod: Redis (Render Key Value) si REDIS_URL défini
 
 const express = require("express");
 const path = require("path");
@@ -9,42 +10,94 @@ const crypto = require("crypto");
 const session = require("express-session");
 const cors = require("cors");
 
+// --- Redis session store (optionnel) ---
+let RedisStore;
+let createClient;
+try {
+  // connect-redis v8+ exporte .default
+  RedisStore = require("connect-redis").default;
+  ({ createClient } = require("redis"));
+} catch (e) {
+  // Si tu n'as pas encore installé, ça restera en MemoryStore
+  RedisStore = null;
+  createClient = null;
+}
+
 const app = express();
 const PORT = process.env.PORT || 10000;
 
 // IMPORTANT (Render/Proxy HTTPS) : permet cookie secure derrière proxy
 app.set("trust proxy", 1);
 
-app.use(express.json({ limit: "256kb" }));
+// ----------------------------
+// CORS
+// ----------------------------
+// Si front + back même domaine -> cors inutile, MAIS garder cors en mode safe ne casse pas.
+// Si tu as un front séparé, définis CORS_ORIGIN=https://ton-front
+const CORS_ORIGIN = process.env.CORS_ORIGIN; // optionnel
+
+app.use(
+  cors({
+    origin: (origin, cb) => {
+      // Requêtes same-origin / sans origin (ex: navigateur sur même domaine, ou curl)
+      if (!origin) return cb(null, true);
+
+      // Si CORS_ORIGIN n'est pas défini => on autorise l'origin qui appelle (mode dev/simple)
+      if (!CORS_ORIGIN) return cb(null, true);
+
+      // Si CORS_ORIGIN défini => on verrouille
+      if (origin === CORS_ORIGIN) return cb(null, true);
+
+      return cb(new Error("Not allowed by CORS"));
+    },
+    credentials: true,
+  })
+);
+
+app.use(express.json());
 
 // ----------------------------
-// CORS (OPTIONNEL)
+// SESSION (autorité serveur)
 // ----------------------------
-// ✅ Ton cas actuel (front+back même domaine): pas besoin de CORS.
-// ✅ Si un jour tu héberges le front ailleurs: ajoute sur Render
-//    CORS_ORIGIN=https://ton-site-front.com
-const CORS_ORIGIN = (process.env.CORS_ORIGIN || "").trim();
-if (CORS_ORIGIN) {
-  app.use(
-    cors({
-      origin: CORS_ORIGIN.split(",").map(s => s.trim()),
-      credentials: true,
-    })
-  );
-  app.options("*", cors({ origin: CORS_ORIGIN.split(",").map(s => s.trim()), credentials: true }));
+// En prod, évite MemoryStore -> Redis (Render Key Value) si REDIS_URL existe
+const SESSION_SECRET = process.env.SESSION_SECRET || "CHANGE_ME_IN_PROD";
+const REDIS_URL = process.env.REDIS_URL;
+
+let sessionStore = undefined;
+
+if (REDIS_URL && RedisStore && createClient) {
+  const redisClient = createClient({ url: REDIS_URL });
+
+  redisClient.on("error", (err) => {
+    console.error("Redis error:", err);
+  });
+
+  // On connecte sans bloquer le démarrage (Render peut démarrer avant Redis)
+  redisClient.connect().catch((err) => {
+    console.error("Redis connect failed:", err);
+  });
+
+  sessionStore = new RedisStore({
+    client: redisClient,
+    prefix: "slot:",
+  });
+
+  console.log("✅ Session store: Redis");
+} else {
+  console.log("⚠️ Session store: MemoryStore (OK en dev, pas idéal en prod)");
 }
 
-// --------- SESSION (autorité serveur) ----------
 app.use(
   session({
     name: "slot.sid",
-    secret: process.env.SESSION_SECRET || "CHANGE_ME_IN_PROD",
+    secret: SESSION_SECRET,
     resave: false,
     saveUninitialized: true,
+    store: sessionStore, // undefined => MemoryStore par défaut
     cookie: {
       httpOnly: true,
       sameSite: "lax",
-      secure: process.env.NODE_ENV === "production", // OK avec trust proxy (Render HTTPS)
+      secure: process.env.NODE_ENV === "production", // OK avec trust proxy
       maxAge: 1000 * 60 * 60 * 24 * 7, // 7 jours
     },
   })
@@ -126,6 +179,7 @@ function initSessionState(req) {
       winMultiplier: 1,
       lastWinCents: 0,
       spinLock: false,
+
       nonce: 0,
       serverSeed: newServerSeedHex(),
       serverSeedHash: "",
@@ -151,6 +205,7 @@ function publicState(st) {
 
 // ----------------------------
 // Évaluation d'une grille (CENTIMES)
+// retourne baseWinCents + bonusTriggered + winningLines
 // ----------------------------
 function evaluateSpinBase(grid, betCents) {
   let baseWinCents = 0;
@@ -167,18 +222,26 @@ function evaluateSpinBase(grid, betCents) {
     let baseSymbol = null;
     let invalid = false;
 
+    // baseSymbol = premier symbole non-wild (bonus invalide la ligne)
     for (let i = 0; i < line.length; i++) {
       const [row, col] = line[i];
       const sym = grid[row][col];
 
-      if (sym === BONUS_ID) { invalid = true; break; }
-      if (sym !== WILD_ID) { baseSymbol = sym; break; }
+      if (sym === BONUS_ID) {
+        invalid = true;
+        break;
+      }
+      if (sym !== WILD_ID) {
+        baseSymbol = sym;
+        break;
+      }
     }
     if (invalid || baseSymbol === null) return;
 
     const table = PAYTABLE[baseSymbol];
     if (!table) return;
 
+    // compte les symboles consécutifs depuis la gauche (baseSymbol ou wild)
     let count = 0;
     for (let i = 0; i < line.length; i++) {
       const [row, col] = line[i];
@@ -323,6 +386,9 @@ app.post("/spin", (req, res) => {
         nextServerSeedHash: st.serverSeedHash,
       },
     });
+  } catch (err) {
+    console.error("Spin error:", err);
+    return res.status(500).json({ error: "SERVER_ERROR", ...publicState(st) });
   } finally {
     st.spinLock = false;
   }
