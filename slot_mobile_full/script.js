@@ -1551,8 +1551,13 @@ async function onSpinOrStop() {
     credentials: "include",
     body: JSON.stringify({ betCents, clientSeed }),
   })
-    .then(r => r.json())
-    .then((data) => {
+    .then(async (r) => {
+  let data = null;
+  try { data = await r.json(); } catch (_) { data = { error: "SERVER_ERROR" }; }
+  if (!r.ok && !data.error) data.error = "SERVER_ERROR";
+  return data;
+})
+.then((data) => {
       if (data.error) {
         pendingOutcome = { error: data.error, ...data };
         pendingGrid = null;
