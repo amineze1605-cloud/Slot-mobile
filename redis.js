@@ -10,22 +10,24 @@ function getRedisClient() {
 
   if (redisClient) return redisClient;
 
-  redisClient = createClient({ url });
-
-  redisClient.on("error", (err) => {
-    console.error("Redis error:", err);
+  redisClient = createClient({
+    url,
+    socket: { connectTimeout: 5000 },
   });
 
-  // Connexion unique (promise mémorisée)
+  redisClient.on("error", (err) => console.error("[REDIS] error:", err?.message || err));
+  redisClient.on("connect", () => console.log("[REDIS] connect…"));
+  redisClient.on("ready", () => console.log("[REDIS] ready ✅"));
+  redisClient.on("reconnecting", () => console.log("[REDIS] reconnecting…"));
+
   redisConnectPromise = redisClient.connect().catch((err) => {
-  console.error("Redis connect failed:", err);
-  throw err; // ✅ important
-});
+    console.error("[REDIS] connect failed:", err?.message || err);
+    throw err; // ✅ important
+  });
 
   return redisClient;
 }
 
-// Optionnel: si tu veux attendre la connexion dans server.js
 async function waitRedisReady() {
   if (redisConnectPromise) await redisConnectPromise;
 }
