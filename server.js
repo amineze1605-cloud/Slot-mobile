@@ -15,16 +15,24 @@ const PORT = process.env.PORT || 10000;
 // IMPORTANT (Render/Proxy HTTPS) : permet cookie secure derrière proxy
 app.set("trust proxy", 1);
 
-// Si front + back même domaine -> cors inutile.
-// Je le laisse en "safe" (utile si tu héberges le front ailleurs).
-app.use(
-  cors({
-    origin: true,
-    credentials: true,
-  })
-);
+app.use(express.json({ limit: "256kb" }));
 
-app.use(express.json());
+// ----------------------------
+// CORS (OPTIONNEL)
+// ----------------------------
+// ✅ Ton cas actuel (front+back même domaine): pas besoin de CORS.
+// ✅ Si un jour tu héberges le front ailleurs: ajoute sur Render
+//    CORS_ORIGIN=https://ton-site-front.com
+const CORS_ORIGIN = (process.env.CORS_ORIGIN || "").trim();
+if (CORS_ORIGIN) {
+  app.use(
+    cors({
+      origin: CORS_ORIGIN.split(",").map(s => s.trim()),
+      credentials: true,
+    })
+  );
+  app.options("*", cors({ origin: CORS_ORIGIN.split(",").map(s => s.trim()), credentials: true }));
+}
 
 // --------- SESSION (autorité serveur) ----------
 app.use(
@@ -36,7 +44,7 @@ app.use(
     cookie: {
       httpOnly: true,
       sameSite: "lax",
-      secure: process.env.NODE_ENV === "production", // OK avec trust proxy
+      secure: process.env.NODE_ENV === "production", // OK avec trust proxy (Render HTTPS)
       maxAge: 1000 * 60 * 60 * 24 * 7, // 7 jours
     },
   })
@@ -143,7 +151,6 @@ function publicState(st) {
 
 // ----------------------------
 // Évaluation d'une grille (CENTIMES)
-// retourne baseWinCents + bonusTriggered + winningLines
 // ----------------------------
 function evaluateSpinBase(grid, betCents) {
   let baseWinCents = 0;
