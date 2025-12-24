@@ -98,7 +98,7 @@ function getClientSeed() {
   let s = localStorage.getItem(CLIENT_SEED_KEY);
   if (!s) {
     const arr = new Uint8Array(16);
-    crypto.getRandomValues(arr);
+    (window.crypto || crypto).getRandomValues(arr);
     s = Array.from(arr).map(b => b.toString(16).padStart(2, "0")).join("");
     localStorage.setItem(CLIENT_SEED_KEY, s);
   }
@@ -1072,17 +1072,15 @@ function hudBuildBetBand(x, y, w, h) {
     cx += chipW + gap;
   });
 
-  const hit = new PIXI.Graphics();
-  hit.beginFill(0xffffff, 0.001);
-  hit.drawRect(0, 0, w, h);
-  hit.endFill();
-  hit.interactive = true;
-  hud.betBand.addChild(hit);
+  // ✅ FIX IMPORTANT: plus de "hit overlay" au-dessus des chips.
+  // On met une hitArea sur le conteneur, et on écoute les events dessus.
+  hud.betBand.interactive = true;
+  hud.betBand.hitArea = new PIXI.Rectangle(0, 0, w, h);
 
-  hit.on("pointerdown", (e) => { if (!spinning) dragStart(e.data.global.x); });
-  hit.on("pointermove", (e) => { if (!spinning) dragMove(e.data.global.x); });
-  hit.on("pointerup", () => { dragEnd(); });
-  hit.on("pointerupoutside", () => { dragEnd(); });
+  hud.betBand.on("pointerdown", (e) => { if (!spinning) dragStart(e.data.global.x); });
+  hud.betBand.on("pointermove", (e) => { if (!spinning) dragMove(e.data.global.x); });
+  hud.betBand.on("pointerup", () => { dragEnd(); });
+  hud.betBand.on("pointerupoutside", () => { dragEnd(); });
 
   hudSetBetScroll(0);
   return hud.betBand;
@@ -1237,7 +1235,7 @@ function recycleReelOneStepDown(reel, newTopId) {
   s.unshift(bottom);
 }
 
-// applique grille finale
+// applique grille finale (utile si tu veux forcer une synchro)
 function applyGridToReels(grid) {
   if (!grid) return;
 
@@ -1447,7 +1445,13 @@ function animateSpinUntilDone(preset) {
       }
 
       if (allDone) {
-        applyGridToReels(pendingGrid);
+        // ✅ FIX IMPORTANT: ne PAS ré-appliquer la grille ici (ça créait un “swap”/jump)
+        for (let c = 0; c < reels.length; c++) {
+          const r = reels[c];
+          r.container.y = 0;
+          r.offset = 0;
+          r.vel = 0;
+        }
         return resolve();
       }
       requestAnimationFrame(tick);
