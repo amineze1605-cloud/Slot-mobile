@@ -2,9 +2,11 @@
 // ✅ anti-float front: affichage en centimes (int), aucun calcul de wallet
 // ✅ utilise résultat serveur: data.winCents / data.bonus / data.winningLines + état autoritaire
 // ✅ bande mise: tap = sélection (pas de mouvement), drag, inertia, snap LEFT
-// ✅ + AbortController timeout client /spin
-// ✅ + anti double-tap iOS sur SPIN (start only)
+// ✅ + AbortController timeout client /spin (timeout réel côté client)
+// ✅ + anti double-tap iOS sur START
+// ✅ + START sur pointerdown / STOP sur pointerup (anti ghost tap)
 // ✅ + lock visuel + lock input bande mise pendant spin
+// ✅ + validation grid serveur (évite “résultat incomplet” => crash)
 
 PIXI.settings.ROUND_PIXELS = true;
 PIXI.settings.MIPMAP_TEXTURES = PIXI.MIPMAP_MODES.OFF;
@@ -95,6 +97,21 @@ function fmtMoneyFromCents(cents) {
   return (clampInt(cents, -999999999, 999999999) / 100).toFixed(2);
 }
 
+// ------------------ iOS ghost-tap guard (évite STOP immédiat après START) ------------------
+let spinStartedAt = 0;
+const IGNORE_STOP_AFTER_START_MS = 220;
+
+// ------------------ validation résultat serveur ------------------
+function isValidGrid(grid) {
+  return Array.isArray(grid) &&
+    grid.length === ROWS &&
+    grid.every(row =>
+      Array.isArray(row) &&
+      row.length === COLS &&
+      row.every(v => Number.isFinite(Number(v)))
+    );
+}
+
 // ------------------ provably fair clientSeed ------------------
 const CLIENT_SEED_KEY = "slotClientSeed";
 function getClientSeed() {
@@ -103,7 +120,6 @@ function getClientSeed() {
     const arr = new Uint8Array(16);
     const c = window.crypto || window.msCrypto;
     if (!c?.getRandomValues) {
-      // fallback (rare)
       s = (Math.random().toString(16).slice(2) + Date.now().toString(16)).slice(0, 32);
     } else {
       c.getRandomValues(arr);
@@ -160,7 +176,7 @@ async function fetchJsonWithTimeout(url, fetchOpts = {}, timeoutMs = 3000) {
   }
 }
 
-// ------------------ anti double-tap iOS sur SPIN (start only) ------------------
+// ------------------ anti double-tap iOS sur START ------------------
 let lastSpinStartTapAt = 0;
 const SPIN_START_COOLDOWN_MS = 280;
 
@@ -315,7 +331,7 @@ function rebuildAll() {
     hudUpdateFsBadge();
     hudUpdateNumbers();
 
-    hudSetBetBandLocked(spinning); // ✅ keep lock visuel si rebuild pendant spin
+    hudSetBetBandLocked(spinning);
   } catch (e) {
     console.error("Resize rebuild error:", e);
   }
@@ -515,7 +531,7 @@ let hud = {
   betBand: null,
   betStrip: null,
   betChips: [],
-  betLockOverlay: null, // ✅ overlay “LOCK” visuel
+  betLockOverlay: null,
 
   betValuesCents: [5, 10, 20, 30, 40, 50, 75, 100, 150, 200],
 
@@ -703,7 +719,6 @@ function hudUpdateFsBadge() {
 function hudUpdateNumbers() {
   if (hud.soldeValue) hud.soldeValue.text = fmtMoneyFromCents(balanceCents);
   if (hud.gainValue) hud.gainValue.text = fmtMoneyFromCents(lastWinCents);
-
   if (hud.betChips?.length) {
     hud.betChips.forEach((c) => setChipSelected(c, c._valueCents === betCents));
   }
@@ -932,11 +947,14 @@ function buildHUD() {
   hud.btnSpin.y = spinY;
   hud.root.addChild(hud.btnSpin);
 
-  // ✅ anti double-tap iOS + stopPropagation (évite event fantôme)
-  hud.btnSpin.on("pointerdown", (e) => { e?.stopPropagation?.(); });
+  // ✅ START sur pointerdown / STOP sur pointerup (anti ghost tap)
+  hud.btnSpin.on("pointerdown", (e) => {
+    e?.stopPropagation?.();
+    onSpinOrStop("start");
+  });
   hud.btnSpin.on("pointerup", (e) => {
     e?.stopPropagation?.();
-    onSpinOrStop();
+    onSpinOrStop("stop");
   });
   hud.btnSpin.on("pointerupoutside", (e) => { e?.stopPropagation?.(); });
 
@@ -970,7 +988,7 @@ function buildHUD() {
   hudUpdateFsBadge();
   hudSetSpinButtonMode(false);
 
-  hudSetBetBandLocked(spinning); // ✅ applique lock visuel si besoin
+  hudSetBetBandLocked(spinning);
 }
 
 // ================== BET BAND (tap=no move, drag, inertia, snap LEFT) ==================
@@ -1006,7 +1024,6 @@ function hudSnapBetToLeftSmooth(ms = 200) {
 
   const leftPad = hud._betLeftPad ?? 16;
   const bandW = hud._betBandW || hud.betBand.width;
-
   if ((hud._betContentW || 0) <= bandW) return;
 
   let best = null;
@@ -1139,7 +1156,6 @@ function hudBuildBetBand(x, y, w, h) {
 
     setChipSelected(chip, vCents === betCents);
 
-    // ✅ stopPropagation => évite double drag (chip + betBand)
     chip.on("pointerdown", (e) => { if (!spinning) { e.stopPropagation(); dragStart(e.data.global.x); }});
     chip.on("pointermove", (e) => { if (!spinning) { e.stopPropagation(); dragMove(e.data.global.x); }});
 
@@ -1161,7 +1177,6 @@ function hudBuildBetBand(x, y, w, h) {
     cx += chipW + gap;
   });
 
-  // écoute drag sur bande (hors chips)
   hud.betBand.interactive = true;
   hud.betBand.hitArea = new PIXI.Rectangle(0, 0, w, h);
 
@@ -1170,7 +1185,7 @@ function hudBuildBetBand(x, y, w, h) {
   hud.betBand.on("pointerup", () => { dragEnd(); });
   hud.betBand.on("pointerupoutside", () => { dragEnd(); });
 
-  // ✅ overlay lock visuel (au-dessus)
+  // ✅ overlay lock visuel
   const lock = new PIXI.Container();
   const dim = new PIXI.Graphics();
   dim.beginFill(0x000000, 0.35);
@@ -1587,22 +1602,27 @@ const PAYLINES_UI = [
   [[0, 2],[1, 1],[2, 0],[3, 1],[4, 2]],
 ];
 
-async function onSpinOrStop() {
-  // STOP doit rester réactif : pas de cooldown ici
-  if (spinning) {
+async function onSpinOrStop(action = "auto") {
+  // STOP demandé explicitement (ou auto si spinning)
+  if (action === "stop" || (action === "auto" && spinning)) {
+    const now = performance.now();
+    if (now - spinStartedAt < IGNORE_STOP_AFTER_START_MS) return;
+
     requestStop(SPEEDS[speedIndex]);
     hudSetSpinButtonMode(true);
     return;
   }
 
-  // ✅ anti double-tap iOS sur START uniquement
-  if (!canStartSpinNow()) return;
+  // START demandé
+  if (action !== "start" && action !== "auto") return;
 
+  if (!canStartSpinNow()) return;
   if (spinInFlight) return;
   if (!app || !symbolTextures.length) return;
 
   spinInFlight = true;
   spinning = true;
+  spinStartedAt = performance.now();
   stopRequested = false;
   stopArmedAt = 0;
 
@@ -1619,14 +1639,12 @@ async function onSpinOrStop() {
   lastWinCents = 0;
   hudUpdateNumbers();
 
-  // ✅ lock visuel + input bet band pendant le spin
   hudSetBetBandLocked(true);
 
   const preset = SPEEDS[speedIndex];
   const now = performance.now();
   prepareReelPlans(now, preset);
 
-  // ✅ /spin avec AbortController timeout réel
   (async () => {
     const data = await fetchJsonWithTimeout(
       "/spin",
@@ -1641,6 +1659,14 @@ async function onSpinOrStop() {
 
     if (data.error) {
       pendingOutcome = { error: data.error, ...data };
+      pendingGrid = null;
+      gridArrivedAt = performance.now();
+      ensurePlansAfterGrid(preset);
+      return;
+    }
+
+    if (!isValidGrid(data.result)) {
+      pendingOutcome = { error: "SERVER_ERROR" };
       pendingGrid = null;
       gridArrivedAt = performance.now();
       ensurePlansAfterGrid(preset);
@@ -1663,20 +1689,18 @@ async function onSpinOrStop() {
     ensurePlansAfterGrid(preset);
   })();
 
-  const MAX_WAIT_MS = SPIN_REQUEST_TIMEOUT_MS + 600; // marge UI
+  const MAX_WAIT_MS = SPIN_REQUEST_TIMEOUT_MS + 600;
 
   const startWait = performance.now();
   while (!pendingGrid && !pendingOutcome?.error && performance.now() - startWait < MAX_WAIT_MS) {
-  await new Promise((res) => setTimeout(res, 25));
-}
+    await new Promise((res) => setTimeout(res, 25));
+  }
 
-  // erreur => cut propre
   if (!pendingGrid || !pendingOutcome || pendingOutcome.error) {
     spinning = false;
     spinInFlight = false;
     hudSetSpinButtonMode(false);
 
-    // ✅ unlock bet band
     hudSetBetBandLocked(false);
 
     if (pendingOutcome?.error === "INSUFFICIENT_FUNDS") hudSetStatusMessage("SOLDE INSUFFISANT");
@@ -1691,7 +1715,6 @@ async function onSpinOrStop() {
 
   await animateSpinUntilDone(preset);
 
-  // appliquer état autoritaire
   balanceCents = pendingOutcome.balanceCents;
   freeSpins = pendingOutcome.freeSpins;
   winMultiplier = pendingOutcome.winMultiplier;
@@ -1701,7 +1724,6 @@ async function onSpinOrStop() {
   spinInFlight = false;
   hudSetSpinButtonMode(false);
 
-  // ✅ unlock bet band
   hudSetBetBandLocked(false);
 
   hudUpdateNumbers();
@@ -1711,7 +1733,6 @@ async function onSpinOrStop() {
   const bonus = pendingOutcome.bonus || { freeSpins: 0, multiplier: 1 };
   const winningLines = pendingOutcome.winningLines || [];
 
-  // status + highlight
   if ((bonus.freeSpins || 0) > 0) {
     hudSetStatusMessage("BONUS ! +10 FREE SPINS (GAINS ×2)");
   } else if (winCents > 0) {
