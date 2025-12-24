@@ -7,6 +7,7 @@ const express = require("express");
 const path = require("path");
 const crypto = require("crypto");
 const session = require("express-session");
+const cors = require("cors");
 
 const app = express();
 const PORT = process.env.PORT || 10000;
