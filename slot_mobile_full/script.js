@@ -1663,11 +1663,13 @@ async function onSpinOrStop() {
     ensurePlansAfterGrid(preset);
   })();
 
-  // attendre grid max 4s (coupe si erreur connue)
+  const SPIN_TIMEOUT_MS = 7000; // (si tu l’as déjà, garde une seule définition)
+  const MAX_WAIT_MS = SPIN_TIMEOUT_MS + 300;
+
   const startWait = performance.now();
-  while (!pendingGrid && !pendingOutcome?.error && performance.now() - startWait < 4000) {
-    await new Promise((res) => setTimeout(res, 25));
-  }
+  while (!pendingGrid && !pendingOutcome?.error && performance.now() - startWait < MAX_WAIT_MS) {
+  await new Promise((res) => setTimeout(res, 25));
+}
 
   // erreur => cut propre
   if (!pendingGrid || !pendingOutcome || pendingOutcome.error) {
