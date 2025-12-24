@@ -1,3 +1,9 @@
 node_modules/
 .env
 .DS_store
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+.env.*
+.vscode/
