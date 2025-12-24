@@ -13,9 +13,6 @@ const crypto = require("crypto");
 const session = require("express-session");
 const cors = require("cors");
 
-let redisClient = null;
-let usingRedis = false;
-
 // ----------------------------
 // CONFIG
 // ----------------------------
@@ -198,6 +195,9 @@ function generateGridProvablyFair(serverSeed, clientSeed, nonce) {
 // ----------------------------
 // Redis store (optionnel)
 // ----------------------------
+let redisClient = null;
+let usingRedis = false;
+
 function getRedisStoreCtor(mod) {
   // connect-redis peut exporter default / RedisStore / function
   if (typeof mod === "function") return mod;
@@ -209,7 +209,47 @@ function getRedisStoreCtor(mod) {
 async function initRedisSessionStore() {
   if (!REDIS_URL) return null;
 
-  const { createClient } = require("redis");
+  // 1) Essaye d'utiliser ton fichier redis.js si présent
+  try {
+    const redisMod = require("./redis");
+
+    if (redisMod && typeof redisMod.getRedisClient === "function") {
+      redisClient = redisMod.getRedisClient();
+      if (typeof redisMod.waitRedisReady === "function") {
+        await redisMod.waitRedisReady();
+      } else if (redisClient && redisClient.connect && !redisClient.isOpen) {
+        await redisClient.connect().catch(() => {});
+      }
+    } else if (redisMod && typeof redisMod.createRedisClient === "function") {
+      // ton redis.js actuel: connect() est lancé sans await
+      redisClient = redisMod.createRedisClient();
+      // on essaie quand même d'attendre si possible
+      if (redisClient && redisClient.connect && !redisClient.isOpen) {
+        await redisClient.connect().catch(() => {});
+      }
+    }
+  } catch (_) {
+    // pas grave, fallback ci-dessous
+  }
+
+  // 2) Fallback: crée un client ici si redis.js n'a rien fourni
+  if (!redisClient) {
+    const { createClient } = require("redis");
+    redisClient = createClient({ url: REDIS_URL });
+
+    redisClient.on("error", (err) => {
+      console.error("[REDIS] error:", err?.message || err);
+    });
+
+    try {
+      await redisClient.connect();
+    } catch (e) {
+      console.error("[REDIS] connect failed:", e?.message || e);
+      return null;
+    }
+  }
+
+  // 3) connect-redis store
   const connectRedis = require("connect-redis");
   const RedisStore = getRedisStoreCtor(connectRedis);
 
@@ -218,26 +258,20 @@ async function initRedisSessionStore() {
     return null;
   }
 
-  redisClient = createClient({ url: REDIS_URL });
-
-  redisClient.on("error", (err) => {
-    console.error("[REDIS] error:", err?.message || err);
-  });
-
-  try {
-    await redisClient.connect();
-    usingRedis = true;
-    console.log("[REDIS] connected");
-    return new RedisStore({
-      client: redisClient,
-      prefix: "slot:",
-      // ttl géré par cookie maxAge généralement, mais ok comme ça
-    });
-  } catch (e) {
-    console.error("[REDIS] connect failed, fallback MemoryStore:", e?.message || e);
-    usingRedis = false;
+  // si redis client pas prêt => on préfère fallback
+  const ready = Boolean(redisClient) && (redisClient.isReady === true || redisClient.isOpen === true);
+  if (!ready) {
+    console.warn("[REDIS] client not ready yet, fallback MemoryStore.");
     return null;
   }
+
+  usingRedis = true;
+  console.log("[REDIS] connected/ready ✅");
+
+  return new RedisStore({
+    client: redisClient,
+    prefix: "slot:",
+  });
 }
 
 // ----------------------------
@@ -249,7 +283,7 @@ async function main() {
   // Render/Proxy HTTPS : cookies secure + req.secure correct
   app.set("trust proxy", 1);
 
-  // CORS : OK même si front/back même domaine (ça ne casse pas)
+  // CORS : OK même si front/back même domaine
   app.use(cors({ origin: true, credentials: true }));
 
   app.use(express.json({ limit: "128kb" }));
@@ -277,7 +311,7 @@ async function main() {
       cookie: {
         httpOnly: true,
         sameSite: "lax",
-        secure: "auto", // mieux derrière proxy/https
+        secure: "auto",
         maxAge: 1000 * 60 * 60 * 24 * 7, // 7 jours
       },
     })
@@ -293,6 +327,10 @@ async function main() {
       usingRedis,
       hasRedisUrl: Boolean(REDIS_URL),
       hasSessionSecret: Boolean(process.env.SESSION_SECRET),
+      redis: {
+        isOpen: Boolean(redisClient && redisClient.isOpen),
+        isReady: Boolean(redisClient && redisClient.isReady),
+      },
     });
   });
 
