@@ -1,10 +1,3 @@
-// server.js — Slot Mobile (server authoritative)
-// - Solde/FS/multiplicateur/gain gérés serveur (session)
-// - Anti-float: tout en CENTIMES (int)
-// - Provably fair: serverSeed commit+reveal + clientSeed + nonce
-// - Sessions: Redis si REDIS_URL fourni, sinon MemoryStore (warning)
-// - /health pour debug Render
-
 "use strict";
 
 const express = require("express");
@@ -21,6 +14,7 @@ const FRONT_DIR = path.join(__dirname, "slot_mobile_full");
 
 const SESSION_SECRET = process.env.SESSION_SECRET || "CHANGE_ME_IN_PROD";
 const REDIS_URL = process.env.REDIS_URL || "";
+const IS_PROD = process.env.NODE_ENV === "production";
 
 // ----------------------------
 // SLOT CONSTANTES
@@ -48,19 +42,16 @@ const PAYTABLE = {
   1: { 3: 2, 4: 3, 5: 4 },
   3: { 3: 2, 4: 3, 5: 4 },
   7: { 3: 2, 4: 3, 5: 4 },
-  10: { 3: 2, 4: 3, 5: 4 },
+  10:{ 3: 2, 4: 3, 5: 4 },
 
   4: { 3: 3, 4: 4, 5: 5 },
   8: { 3: 4, 4: 5, 5: 6 },
   5: { 3: 10, 4: 12, 5: 14 },
   2: { 3: 16, 4: 18, 5: 20 },
-  11: { 3: 20, 4: 25, 5: 30 },
+  11:{ 3: 20, 4: 25, 5: 30 },
   0: { 3: 30, 4: 40, 5: 50 },
 };
 
-// ----------------------------
-// Helpers
-// ----------------------------
 function clampInt(n, min, max) {
   n = Number(n);
   if (!Number.isFinite(n)) return min;
@@ -84,8 +75,23 @@ function pfRandInt(max, serverSeed, clientSeed, nonce, index) {
   return x % max;
 }
 
+function generateGridProvablyFair(serverSeed, clientSeed, nonce) {
+  const grid = [];
+  let idx = 0;
+  for (let r = 0; r < ROWS; r++) {
+    const row = [];
+    for (let c = 0; c < COLS; c++) {
+      row.push(pfRandInt(SYMBOLS_COUNT, serverSeed, clientSeed, nonce, idx++));
+    }
+    grid.push(row);
+  }
+  return grid;
+}
+
 function initSessionState(req) {
   const s = req.session;
+  if (!s) throw new Error("SESSION_MISSING");
+
   if (!s.state) {
     s.state = {
       balanceCents: 1000 * 100,
@@ -118,7 +124,6 @@ function publicState(st) {
 
 // ----------------------------
 // Évaluation d'une grille (CENTIMES)
-// retourne baseWinCents + bonusTriggered + winningLines
 // ----------------------------
 function evaluateSpinBase(grid, betCents) {
   let baseWinCents = 0;
@@ -137,7 +142,7 @@ function evaluateSpinBase(grid, betCents) {
 
     for (let i = 0; i < line.length; i++) {
       const [row, col] = line[i];
-      const sym = grid[row][col];
+      const sym = grid[row]?.[col];
 
       if (sym === BONUS_ID) { invalid = true; break; }
       if (sym !== WILD_ID) { baseSymbol = sym; break; }
@@ -150,7 +155,7 @@ function evaluateSpinBase(grid, betCents) {
     let count = 0;
     for (let i = 0; i < line.length; i++) {
       const [row, col] = line[i];
-      const sym = grid[row][col];
+      const sym = grid[row]?.[col];
 
       if (sym === BONUS_ID) break;
       if (sym === baseSymbol || sym === WILD_ID) count++;
@@ -163,6 +168,7 @@ function evaluateSpinBase(grid, betCents) {
 
       const lineWinCents = betCents * mult;
       baseWinCents += lineWinCents;
+
       winningLines.push({
         lineIndex,
         symbolId: baseSymbol,
@@ -172,34 +178,13 @@ function evaluateSpinBase(grid, betCents) {
     }
   });
 
-  const bonusTriggered = bonusCount >= 3;
-  return { baseWinCents, bonusTriggered, winningLines };
+  return { baseWinCents, bonusTriggered: bonusCount >= 3, winningLines };
 }
 
-// ----------------------------
-// RNG + grid (provably fair)
-// ----------------------------
-function generateGridProvablyFair(serverSeed, clientSeed, nonce) {
-  const grid = [];
-  let idx = 0;
-  for (let r = 0; r < ROWS; r++) {
-    const row = [];
-    for (let c = 0; c < COLS; c++) {
-      row.push(pfRandInt(SYMBOLS_COUNT, serverSeed, clientSeed, nonce, idx++));
-    }
-    grid.push(row);
-  }
-  return grid;
-}
-
-// ----------------------------
-// Redis store (optionnel)
-// ----------------------------
 let redisClient = null;
 let usingRedis = false;
 
 function getRedisStoreCtor(mod) {
-  // connect-redis peut exporter default / RedisStore / function
   if (typeof mod === "function") return mod;
   if (mod && typeof mod.default === "function") return mod.default;
   if (mod && typeof mod.RedisStore === "function") return mod.RedisStore;
@@ -209,7 +194,6 @@ function getRedisStoreCtor(mod) {
 async function initRedisSessionStore() {
   if (!REDIS_URL) return null;
 
-  // 1) Essaye d'utiliser ton fichier redis.js si présent
   try {
     const redisMod = require("./redis");
 
@@ -217,22 +201,17 @@ async function initRedisSessionStore() {
       redisClient = redisMod.getRedisClient();
       if (typeof redisMod.waitRedisReady === "function") {
         await redisMod.waitRedisReady();
-      } else if (redisClient && redisClient.connect && !redisClient.isOpen) {
+      } else if (redisClient?.connect && !redisClient.isOpen) {
         await redisClient.connect().catch(() => {});
       }
     } else if (redisMod && typeof redisMod.createRedisClient === "function") {
-      // ton redis.js actuel: connect() est lancé sans await
       redisClient = redisMod.createRedisClient();
-      // on essaie quand même d'attendre si possible
-      if (redisClient && redisClient.connect && !redisClient.isOpen) {
+      if (redisClient?.connect && !redisClient.isOpen) {
         await redisClient.connect().catch(() => {});
       }
     }
-  } catch (_) {
-    // pas grave, fallback ci-dessous
-  }
+  } catch (_) {}
 
-  // 2) Fallback: crée un client ici si redis.js n'a rien fourni
   if (!redisClient) {
     const { createClient } = require("redis");
     redisClient = createClient({ url: REDIS_URL });
@@ -249,16 +228,13 @@ async function initRedisSessionStore() {
     }
   }
 
-  // 3) connect-redis store
   const connectRedis = require("connect-redis");
   const RedisStore = getRedisStoreCtor(connectRedis);
-
   if (!RedisStore) {
-    console.warn("[REDIS] connect-redis export not found (version mismatch). Falling back to MemoryStore.");
+    console.warn("[REDIS] connect-redis export not found. Falling back to MemoryStore.");
     return null;
   }
 
-  // si redis client pas prêt => on préfère fallback
   const ready = Boolean(redisClient) && (redisClient.isReady === true || redisClient.isOpen === true);
   if (!ready) {
     console.warn("[REDIS] client not ready yet, fallback MemoryStore.");
@@ -268,27 +244,24 @@ async function initRedisSessionStore() {
   usingRedis = true;
   console.log("[REDIS] connected/ready ✅");
 
-  return new RedisStore({
-    client: redisClient,
-    prefix: "slot:",
-  });
+  return new RedisStore({ client: redisClient, prefix: "slot:" });
 }
 
-// ----------------------------
-// Bootstrap server
-// ----------------------------
 async function main() {
   const app = express();
 
-  // Render/Proxy HTTPS : cookies secure + req.secure correct
   app.set("trust proxy", 1);
+  app.disable("x-powered-by");
 
-  // CORS : OK même si front/back même domaine
   app.use(cors({ origin: true, credentials: true }));
-
   app.use(express.json({ limit: "128kb" }));
 
-  // Session store
+  // anti cache (évite comportements bizarres Safari/Proxy)
+  app.use((req, res, next) => {
+    res.setHeader("Cache-Control", "no-store");
+    next();
+  });
+
   const store = await initRedisSessionStore();
 
   if (!process.env.SESSION_SECRET) {
@@ -311,22 +284,21 @@ async function main() {
       cookie: {
         httpOnly: true,
         sameSite: "lax",
-        secure: "auto",
-        maxAge: 1000 * 60 * 60 * 24 * 7, // 7 jours
+        secure: IS_PROD,          // ✅ FIX IMPORTANT (pas "auto")
+        maxAge: 1000 * 60 * 60 * 24 * 7,
       },
     })
   );
 
-  // Serve frontend
   app.use(express.static(FRONT_DIR));
 
-  // Health
   app.get("/health", (req, res) => {
     res.json({
       ok: true,
       usingRedis,
       hasRedisUrl: Boolean(REDIS_URL),
       hasSessionSecret: Boolean(process.env.SESSION_SECRET),
+      nodeEnv: process.env.NODE_ENV || "",
       redis: {
         isOpen: Boolean(redisClient && redisClient.isOpen),
         isReady: Boolean(redisClient && redisClient.isReady),
@@ -334,20 +306,30 @@ async function main() {
     });
   });
 
-  // API: état serveur
   app.get("/state", (req, res) => {
     const st = initSessionState(req);
     res.json(publicState(st));
   });
-
-  // Endpoint SPIN (autoritaire)
-  app.post("/spin", (req, res) => {
+  
+    app.post("/spin", (req, res) => {
     const st = initSessionState(req);
 
     if (st.spinLock) {
       return res.status(429).json({ error: "SPIN_IN_PROGRESS", ...publicState(st) });
     }
     st.spinLock = true;
+
+    // ✅ snapshot (rollback si crash)
+    const snap = {
+      balanceCents: st.balanceCents,
+      freeSpins: st.freeSpins,
+      winMultiplier: st.winMultiplier,
+      lastWinCents: st.lastWinCents,
+      nonce: st.nonce,
+      serverSeed: st.serverSeed,
+      serverSeedHash: st.serverSeedHash,
+      spinLock: false,
+    };
 
     try {
       const body = req.body || {};
@@ -362,7 +344,6 @@ async function main() {
           ? body.clientSeed.slice(0, 64)
           : "default-client-seed";
 
-      // reset multiplier si plus de FS
       if (st.freeSpins <= 0) st.winMultiplier = 1;
 
       const paidSpin = st.freeSpins <= 0;
@@ -378,7 +359,6 @@ async function main() {
 
       st.lastWinCents = 0;
 
-      // provably fair: on utilise serverSeed courant pour CE spin, puis on rotate
       st.nonce += 1;
 
       const usedServerSeed = st.serverSeed;
@@ -393,29 +373,28 @@ async function main() {
         st.winMultiplier = 2;
       }
 
-      const totalWinCents = baseWinCents * (st.winMultiplier > 1 ? st.winMultiplier : 1);
+      const mult = st.winMultiplier > 1 ? st.winMultiplier : 1;
+      const totalWinCents = baseWinCents * mult;
+
       st.lastWinCents = totalWinCents;
       st.balanceCents += totalWinCents;
 
-      // rotate seed (important)
+      // rotate seed
       st.serverSeed = newServerSeedHex();
       st.serverSeedHash = sha256Hex(st.serverSeed);
 
-      res.json({
+      return res.json({
         result: grid,
         betCents,
         winCents: totalWinCents,
-        win: totalWinCents / 100,
         bonus: { freeSpins: bonusTriggered ? 10 : 0, multiplier: bonusTriggered ? 2 : 1 },
         winningLines,
 
-        // état autoritaire
         balanceCents: st.balanceCents,
         freeSpins: st.freeSpins,
         winMultiplier: st.winMultiplier,
         lastWinCents: st.lastWinCents,
 
-        // provably fair
         fair: {
           clientSeed,
           nonce: usedNonce,
@@ -426,13 +405,24 @@ async function main() {
       });
     } catch (e) {
       console.error("[/spin] error:", e?.stack || e);
-      res.status(500).json({ error: "SERVER_ERROR" });
+
+      // ✅ rollback
+      st.balanceCents = snap.balanceCents;
+      st.freeSpins = snap.freeSpins;
+      st.winMultiplier = snap.winMultiplier;
+      st.lastWinCents = snap.lastWinCents;
+      st.nonce = snap.nonce;
+      st.serverSeed = snap.serverSeed;
+      st.serverSeedHash = snap.serverSeedHash;
+
+      if (!res.headersSent) {
+        return res.status(500).json({ error: "SERVER_ERROR", ...publicState(st) });
+      }
     } finally {
       st.spinLock = false;
     }
   });
 
-  // Fallback index.html
   app.get("*", (req, res) => {
     res.sendFile(path.join(FRONT_DIR, "index.html"));
   });
@@ -442,7 +432,6 @@ async function main() {
   });
 }
 
-// Safe shutdown
 process.on("unhandledRejection", (err) => {
   console.error("[FATAL] unhandledRejection:", err);
 });
