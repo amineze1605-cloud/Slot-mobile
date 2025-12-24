@@ -147,9 +147,11 @@ function loadSpritesheet() {
 }
 
 // ------------------ sync state serveur ------------------
-async function syncStateFromServer() {
+async function syncStateFromServer({ clearError = true } = {}) {
   try {
     const r = await fetch("/state", { credentials: "include" });
+    if (!r.ok) throw new Error(`HTTP_${r.status}`);
+
     const data = await r.json();
 
     balanceCents = Number(data.balanceCents) || balanceCents;
@@ -164,8 +166,18 @@ async function syncStateFromServer() {
 
     hudUpdateNumbers();
     hudUpdateFsBadge();
+
+    // ✅ si on vient de récupérer l'état OK, on enlève "ERREUR SERVEUR"
+    if (clearError && hud?.statusText && /ERREUR/i.test(hud.statusText.text)) {
+      if (spinning) hudSetStatusMessage("SPIN…");
+      else if (freeSpins > 0) hudSetStatusMessage("FREE SPINS !");
+      else hudSetStatusMessage("METTEZ VOTRE MISE, S'IL VOUS PLAÎT");
+    }
+
+    return true;
   } catch (e) {
     console.log("syncStateFromServer failed", e);
+    return false;
   }
 }
 
