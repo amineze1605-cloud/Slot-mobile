@@ -18,8 +18,9 @@ function getRedisClient() {
 
   // Connexion unique (promise mémorisée)
   redisConnectPromise = redisClient.connect().catch((err) => {
-    console.error("Redis connect failed:", err);
-  });
+  console.error("Redis connect failed:", err);
+  throw err; // ✅ important
+});
 
   return redisClient;
 }
