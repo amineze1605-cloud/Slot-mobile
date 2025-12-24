@@ -38,7 +38,7 @@ const MIN_SPIN_BEFORE_STOP_MS = 260;
 const STOP_PREDECEL_BOOST = 0.40;
 
 // réseau
-const SPIN_REQUEST_TIMEOUT_MS = 3200;
+const SPIN_REQUEST_TIMEOUT_MS = 8000;
 
 // anti réponse tardive / double spin
 let currentSpinId = 0;
