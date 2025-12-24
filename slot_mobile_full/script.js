@@ -1599,8 +1599,8 @@ async function onSpinOrStop() {
     else if (pendingOutcome?.error === "BET_NOT_ALLOWED") hudSetStatusMessage("MISE NON AUTORISÉE");
     else hudSetStatusMessage("ERREUR SERVEUR");
 
-    // resync state au cas où
-    await syncStateFromServer();
+    // resync state au cas où (mais on garde le message d'erreur affiché)
+    await syncStateFromServer({ clearError: false });
     return;
   }
 
