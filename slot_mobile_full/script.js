@@ -1,7 +1,8 @@
-// script.js — Slot mobile PIXI v5 (5x3) — PRO CASINO MODE
+// script.js — Slot mobile PIXI v5 (5x3) — PRO CASINO MODE (Render-ready)
 // ✅ anti-float front: affichage en centimes (int), aucun calcul de wallet
 // ✅ utilise résultat serveur: data.winCents / data.bonus / data.winningLines + état autoritaire
 // ✅ bande mise: tap = sélection (pas de mouvement), drag, inertia, snap LEFT
+// ✅ fix: stopPropagation sur chips (évite double drag), init status selon FS, wait loop coupe si erreur, crypto safe
 
 PIXI.settings.ROUND_PIXELS = true;
 PIXI.settings.MIPMAP_TEXTURES = PIXI.MIPMAP_MODES.OFF;
@@ -98,7 +99,7 @@ function getClientSeed() {
   let s = localStorage.getItem(CLIENT_SEED_KEY);
   if (!s) {
     const arr = new Uint8Array(16);
-    (window.crypto || crypto).getRandomValues(arr);
+    window.crypto.getRandomValues(arr);
     s = Array.from(arr).map(b => b.toString(16).padStart(2, "0")).join("");
     localStorage.setItem(CLIENT_SEED_KEY, s);
   }
@@ -234,10 +235,11 @@ async function initPixi() {
 
     await syncStateFromServer(); // ✅ état autoritaire au lancement
 
-    hudSetStatusMessage("METTEZ VOTRE MISE, S'IL VOUS PLAÎT");
+    // ✅ status logique selon FS
+    hudSetStatusMessage(freeSpins > 0 ? "FREE SPINS !" : "METTEZ VOTRE MISE, S'IL VOUS PLAÎT");
     hudUpdateFsBadge();
-    app.ticker.add(updateHighlight);
 
+    app.ticker.add(updateHighlight);
     window.addEventListener("resize", rebuildAll);
   } catch (e) {
     console.error("Erreur chargement", e);
@@ -265,7 +267,10 @@ function rebuildAll() {
     buildSlotScene();
     buildHUD();
 
-    hudSetStatusMessage(spinning ? "SPIN…" : "METTEZ VOTRE MISE, S'IL VOUS PLAÎT");
+    if (spinning) hudSetStatusMessage("SPIN…");
+    else if (freeSpins > 0) hudSetStatusMessage("FREE SPINS !");
+    else hudSetStatusMessage("METTEZ VOTRE MISE, S'IL VOUS PLAÎT");
+
     hudUpdateFsBadge();
     hudUpdateNumbers();
   } catch (e) {
@@ -1064,11 +1069,13 @@ function hudBuildBetBand(x, y, w, h) {
 
     setChipSelected(chip, vCents === betCents);
 
-    chip.on("pointerdown", (e) => { if (!spinning) dragStart(e.data.global.x); });
-    chip.on("pointermove", (e) => { if (!spinning) dragMove(e.data.global.x); });
+    // ✅ stopPropagation => évite double drag (chip + betBand)
+    chip.on("pointerdown", (e) => { if (!spinning) { e.stopPropagation(); dragStart(e.data.global.x); }});
+    chip.on("pointermove", (e) => { if (!spinning) { e.stopPropagation(); dragMove(e.data.global.x); }});
 
-    chip.on("pointerup", () => {
+    chip.on("pointerup", (e) => {
       if (spinning) return;
+      e.stopPropagation();
       const moved = dragEnd();
       if (moved < TAP_THRESHOLD) {
         betCents = vCents; // ✅ sélectionner seulement
@@ -1076,7 +1083,7 @@ function hudBuildBetBand(x, y, w, h) {
       }
     });
 
-    chip.on("pointerupoutside", () => { dragEnd(); });
+    chip.on("pointerupoutside", (e) => { if (!spinning) e.stopPropagation(); dragEnd(); });
 
     hud.betStrip.addChild(chip);
     hud.betChips.push(chip);
@@ -1544,7 +1551,7 @@ async function onSpinOrStop() {
   const now = performance.now();
   prepareReelPlans(now, preset);
 
-  // ✅ serveur autoritaire
+  // ✅ serveur autoritaire (robuste r.ok + json)
   fetch("/spin", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1552,12 +1559,12 @@ async function onSpinOrStop() {
     body: JSON.stringify({ betCents, clientSeed }),
   })
     .then(async (r) => {
-  let data = null;
-  try { data = await r.json(); } catch (_) { data = { error: "SERVER_ERROR" }; }
-  if (!r.ok && !data.error) data.error = "SERVER_ERROR";
-  return data;
-})
-.then((data) => {
+      let data = null;
+      try { data = await r.json(); } catch (_) { data = { error: "SERVER_ERROR" }; }
+      if (!r.ok && !data.error) data.error = "SERVER_ERROR";
+      return data;
+    })
+    .then((data) => {
       if (data.error) {
         pendingOutcome = { error: data.error, ...data };
         pendingGrid = null;
@@ -1588,9 +1595,9 @@ async function onSpinOrStop() {
       ensurePlansAfterGrid(preset);
     });
 
-  // attendre grid max 4s
+  // attendre grid max 4s (✅ coupe si erreur connue)
   const startWait = performance.now();
-  while (!pendingGrid && performance.now() - startWait < 4000) {
+  while (!pendingGrid && !pendingOutcome?.error && performance.now() - startWait < 4000) {
     await new Promise((res) => setTimeout(res, 25));
   }
 
