@@ -2,7 +2,11 @@
 // ✅ anti-float front: affichage en centimes (int), aucun calcul de wallet
 // ✅ utilise résultat serveur: data.winCents / data.bonus / data.winningLines + état autoritaire
 // ✅ bande mise: tap = sélection (pas de mouvement), drag, inertia, snap LEFT
-// ✅ fix: stopPropagation sur chips (évite double drag), init status selon FS, wait loop coupe si erreur, crypto safe
+// ✅ fix: stopPropagation sur chips (évite double drag), init status selon FS, wait loop coupe si erreur, fetch robuste
+// ✅ SECURITES PRO:
+//    (1) crypto fallback safe (Safari privé / environnements sans crypto)
+//    (2) lock interactions mise si spinning OU spinInFlight
+//    (3) guards anti-NaN sur l’état autoritaire (balance/freeSpins/mult/lastWin)
 
 PIXI.settings.ROUND_PIXELS = true;
 PIXI.settings.MIPMAP_TEXTURES = PIXI.MIPMAP_MODES.OFF;
@@ -93,16 +97,28 @@ function fmtMoneyFromCents(cents) {
   return (clampInt(cents, -999999999, 999999999) / 100).toFixed(2);
 }
 
-// ------------------ provably fair clientSeed ------------------
+// ------------------ provably fair clientSeed (CRYPTO SAFE + FALLBACK) ------------------
 const CLIENT_SEED_KEY = "slotClientSeed";
 function getClientSeed() {
   let s = localStorage.getItem(CLIENT_SEED_KEY);
-  if (!s) {
-    const arr = new Uint8Array(16);
-    window.crypto.getRandomValues(arr);
-    s = Array.from(arr).map(b => b.toString(16).padStart(2, "0")).join("");
-    localStorage.setItem(CLIENT_SEED_KEY, s);
+  if (s) return s;
+
+  // ✅ (1) crypto safe fallback (Safari privé / env sans crypto)
+  try {
+    const c = window.crypto || window.msCrypto;
+    if (c?.getRandomValues) {
+      const arr = new Uint8Array(16);
+      c.getRandomValues(arr);
+      s = Array.from(arr).map(b => b.toString(16).padStart(2, "0")).join("");
+    } else {
+      // fallback non-crypto: évite crash (moins “fair”, mais stable)
+      s = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    }
+  } catch {
+    s = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
   }
+
+  localStorage.setItem(CLIENT_SEED_KEY, s);
   return s;
 }
 const clientSeed = getClientSeed();
@@ -168,7 +184,6 @@ async function syncStateFromServer({ clearError = true } = {}) {
     hudUpdateNumbers();
     hudUpdateFsBadge();
 
-    // ✅ si on vient de récupérer l'état OK, on enlève "ERREUR SERVEUR"
     if (clearError && hud?.statusText && /ERREUR/i.test(hud.statusText.text)) {
       if (spinning) hudSetStatusMessage("SPIN…");
       else if (freeSpins > 0) hudSetStatusMessage("FREE SPINS !");
@@ -233,7 +248,7 @@ async function initPixi() {
 
     hideMessage();
 
-    await syncStateFromServer(); // ✅ état autoritaire au lancement
+    await syncStateFromServer();
 
     // ✅ status logique selon FS
     hudSetStatusMessage(freeSpins > 0 ? "FREE SPINS !" : "METTEZ VOTRE MISE, S'IL VOUS PLAÎT");
@@ -661,7 +676,6 @@ function setChipSelected(chip, selected) {
   chip._bg.alpha = selected ? 1.0 : 0.95;
 }
 
-// Chip “EUR / 0.10 / MISE”
 function makeBetChip(valueCents, w, h) {
   const c = new PIXI.Container();
   c.interactive = true;
@@ -879,7 +893,8 @@ function buildHUD() {
   hud.btnInfo.y = spinY;
 
   hud.btnSpeed.on("pointerup", () => {
-    if (spinning) return;
+    // (2) lock aussi pendant spinInFlight
+    if (spinning || spinInFlight) return;
     speedIndex = (speedIndex + 1) % SPEEDS.length;
     hudRefreshSpeedButtonLabel();
     hudSetStatusMessage(`VITESSE : ${SPEEDS[speedIndex].name}`);
@@ -1023,6 +1038,8 @@ function hudBuildBetBand(x, y, w, h) {
 
   const TAP_THRESHOLD = 8;
 
+  const canInteractBet = () => !(spinning || spinInFlight); // ✅ (2)
+
   const dragStart = (globalX) => {
     hudStopBetInertia();
     hud._betDrag = { startX: globalX, lastX: globalX, startScroll: hud._betScrollX, lastT: performance.now(), moved: 0 };
@@ -1070,11 +1087,19 @@ function hudBuildBetBand(x, y, w, h) {
     setChipSelected(chip, vCents === betCents);
 
     // ✅ stopPropagation => évite double drag (chip + betBand)
-    chip.on("pointerdown", (e) => { if (!spinning) { e.stopPropagation(); dragStart(e.data.global.x); }});
-    chip.on("pointermove", (e) => { if (!spinning) { e.stopPropagation(); dragMove(e.data.global.x); }});
+    chip.on("pointerdown", (e) => {
+      if (!canInteractBet()) return;
+      e.stopPropagation();
+      dragStart(e.data.global.x);
+    });
+    chip.on("pointermove", (e) => {
+      if (!canInteractBet()) return;
+      e.stopPropagation();
+      dragMove(e.data.global.x);
+    });
 
     chip.on("pointerup", (e) => {
-      if (spinning) return;
+      if (!canInteractBet()) return;
       e.stopPropagation();
       const moved = dragEnd();
       if (moved < TAP_THRESHOLD) {
@@ -1083,7 +1108,11 @@ function hudBuildBetBand(x, y, w, h) {
       }
     });
 
-    chip.on("pointerupoutside", (e) => { if (!spinning) e.stopPropagation(); dragEnd(); });
+    chip.on("pointerupoutside", (e) => {
+      if (!canInteractBet()) return;
+      e.stopPropagation();
+      dragEnd();
+    });
 
     hud.betStrip.addChild(chip);
     hud.betChips.push(chip);
@@ -1091,15 +1120,13 @@ function hudBuildBetBand(x, y, w, h) {
     cx += chipW + gap;
   });
 
-  // ✅ FIX IMPORTANT: plus de "hit overlay" au-dessus des chips.
-  // On met une hitArea sur le conteneur, et on écoute les events dessus.
   hud.betBand.interactive = true;
   hud.betBand.hitArea = new PIXI.Rectangle(0, 0, w, h);
 
-  hud.betBand.on("pointerdown", (e) => { if (!spinning) dragStart(e.data.global.x); });
-  hud.betBand.on("pointermove", (e) => { if (!spinning) dragMove(e.data.global.x); });
-  hud.betBand.on("pointerup", () => { dragEnd(); });
-  hud.betBand.on("pointerupoutside", () => { dragEnd(); });
+  hud.betBand.on("pointerdown", (e) => { if (canInteractBet()) dragStart(e.data.global.x); });
+  hud.betBand.on("pointermove", (e) => { if (canInteractBet()) dragMove(e.data.global.x); });
+  hud.betBand.on("pointerup", () => { if (canInteractBet()) dragEnd(); });
+  hud.betBand.on("pointerupoutside", () => { if (canInteractBet()) dragEnd(); });
 
   hudSetBetScroll(0);
   return hud.betBand;
@@ -1464,7 +1491,7 @@ function animateSpinUntilDone(preset) {
       }
 
       if (allDone) {
-        // ✅ FIX IMPORTANT: ne PAS ré-appliquer la grille ici (ça créait un “swap”/jump)
+        // ✅ ne PAS ré-appliquer la grille ici (évite “swap”)
         for (let c = 0; c < reels.length; c++) {
           const r = reels[c];
           r.container.y = 0;
@@ -1611,18 +1638,18 @@ async function onSpinOrStop() {
     else if (pendingOutcome?.error === "BET_NOT_ALLOWED") hudSetStatusMessage("MISE NON AUTORISÉE");
     else hudSetStatusMessage("ERREUR SERVEUR");
 
-    // resync state au cas où (mais on garde le message d'erreur affiché)
     await syncStateFromServer({ clearError: false });
     return;
   }
 
   await animateSpinUntilDone(preset);
 
-  // ✅ appliquer l’état autoritaire
-  balanceCents = pendingOutcome.balanceCents;
-  freeSpins = pendingOutcome.freeSpins;
-  winMultiplier = pendingOutcome.winMultiplier;
-  lastWinCents = pendingOutcome.lastWinCents;
+  // ✅ (3) appliquer l’état autoritaire avec guards anti-NaN
+  const b = pendingOutcome;
+  if (Number.isFinite(b.balanceCents)) balanceCents = b.balanceCents;
+  if (Number.isFinite(b.freeSpins)) freeSpins = b.freeSpins;
+  if (Number.isFinite(b.winMultiplier)) winMultiplier = b.winMultiplier;
+  if (Number.isFinite(b.lastWinCents)) lastWinCents = b.lastWinCents;
 
   spinning = false;
   spinInFlight = false;
@@ -1631,9 +1658,9 @@ async function onSpinOrStop() {
   hudUpdateNumbers();
   hudUpdateFsBadge();
 
-  const winCents = clampInt(pendingOutcome.winCents, 0, 999999999);
-  const bonus = pendingOutcome.bonus || { freeSpins: 0, multiplier: 1 };
-  const winningLines = pendingOutcome.winningLines || [];
+  const winCents = clampInt(b.winCents, 0, 999999999);
+  const bonus = b.bonus || { freeSpins: 0, multiplier: 1 };
+  const winningLines = b.winningLines || [];
 
   // status + highlight
   if ((bonus.freeSpins || 0) > 0) {
@@ -1654,9 +1681,6 @@ async function onSpinOrStop() {
   } else {
     hudSetStatusMessage("PAS DE GAIN");
   }
-
-  // (Optionnel) debug provably fair
-  // console.log("FAIR:", pendingOutcome.fair);
 }
 
 // Start
