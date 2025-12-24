@@ -2,7 +2,7 @@
 // ✅ Solde/FS/multiplicateur/gain gérés serveur (session)
 // ✅ Anti-float: tout en CENTIMES (int)
 // ✅ Provably fair: serverSeed commit+reveal + clientSeed + nonce
-// ✅ Sessions prod: Redis (Render Key Value) si REDIS_URL défini
+// ✅ Sessions robustes en prod via Redis (Render Key-Value) si REDIS_URL est défini
 
 const express = require("express");
 const path = require("path");
@@ -10,101 +10,53 @@ const crypto = require("crypto");
 const session = require("express-session");
 const cors = require("cors");
 
-// --- Redis session store (optionnel) ---
-let RedisStore;
-let createClient;
+// Redis session store (optionnel mais recommandé en prod)
+let RedisStore = null;
+let createClient = null;
 try {
-  // connect-redis v8+ exporte .default
-  RedisStore = require("connect-redis").default;
-  ({ createClient } = require("redis"));
+  RedisStore = require("connect-redis").RedisStore;
+  createClient = require("redis").createClient;
 } catch (e) {
-  // Si tu n'as pas encore installé, ça restera en MemoryStore
-  RedisStore = null;
-  createClient = null;
+  // Si pas installé, on reste sur MemoryStore
 }
 
 const app = express();
 const PORT = process.env.PORT || 10000;
 
+const isProd = process.env.NODE_ENV === "production";
+
 // IMPORTANT (Render/Proxy HTTPS) : permet cookie secure derrière proxy
 app.set("trust proxy", 1);
 
 // ----------------------------
-// CORS
+// CORS (optionnel)
+// - Si tu sers front+back sur le même domaine (ton cas: slot-mobile.onrender.com), tu peux ne PAS mettre CORS.
+// - Si un jour tu mets un front ailleurs, mets CORS_ORIGIN=https://ton-front.com
 // ----------------------------
-// Si front + back même domaine -> cors inutile, MAIS garder cors en mode safe ne casse pas.
-// Si tu as un front séparé, définis CORS_ORIGIN=https://ton-front
-const CORS_ORIGIN = process.env.CORS_ORIGIN; // optionnel
+const corsOriginEnv = (process.env.CORS_ORIGIN || "").trim();
+if (corsOriginEnv) {
+  const allowed = corsOriginEnv
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
 
-app.use(
-  cors({
-    origin: (origin, cb) => {
-      // Requêtes same-origin / sans origin (ex: navigateur sur même domaine, ou curl)
-      if (!origin) return cb(null, true);
-
-      // Si CORS_ORIGIN n'est pas défini => on autorise l'origin qui appelle (mode dev/simple)
-      if (!CORS_ORIGIN) return cb(null, true);
-
-      // Si CORS_ORIGIN défini => on verrouille
-      if (origin === CORS_ORIGIN) return cb(null, true);
-
-      return cb(new Error("Not allowed by CORS"));
-    },
-    credentials: true,
-  })
-);
+  app.use(
+    cors({
+      origin: function (origin, cb) {
+        // requêtes sans origin (curl, same-origin) => OK
+        if (!origin) return cb(null, true);
+        if (allowed.includes(origin)) return cb(null, true);
+        return cb(new Error("Not allowed by CORS"));
+      },
+      credentials: true,
+    })
+  );
+}
 
 app.use(express.json());
 
 // ----------------------------
-// SESSION (autorité serveur)
-// ----------------------------
-// En prod, évite MemoryStore -> Redis (Render Key Value) si REDIS_URL existe
-const SESSION_SECRET = process.env.SESSION_SECRET || "CHANGE_ME_IN_PROD";
-const REDIS_URL = process.env.REDIS_URL;
-
-let sessionStore = undefined;
-
-if (REDIS_URL && RedisStore && createClient) {
-  const redisClient = createClient({ url: REDIS_URL });
-
-  redisClient.on("error", (err) => {
-    console.error("Redis error:", err);
-  });
-
-  // On connecte sans bloquer le démarrage (Render peut démarrer avant Redis)
-  redisClient.connect().catch((err) => {
-    console.error("Redis connect failed:", err);
-  });
-
-  sessionStore = new RedisStore({
-    client: redisClient,
-    prefix: "slot:",
-  });
-
-  console.log("✅ Session store: Redis");
-} else {
-  console.log("⚠️ Session store: MemoryStore (OK en dev, pas idéal en prod)");
-}
-
-app.use(
-  session({
-    name: "slot.sid",
-    secret: SESSION_SECRET,
-    resave: false,
-    saveUninitialized: true,
-    store: sessionStore, // undefined => MemoryStore par défaut
-    cookie: {
-      httpOnly: true,
-      sameSite: "lax",
-      secure: process.env.NODE_ENV === "production", // OK avec trust proxy
-      maxAge: 1000 * 60 * 60 * 24 * 7, // 7 jours
-    },
-  })
-);
-
-// ----------------------------
-// Serve frontend
+// Serve frontend (ton dossier)
 // ----------------------------
 app.use(express.static(path.join(__dirname, "slot_mobile_full")));
 
@@ -122,11 +74,11 @@ const ALLOWED_BETS_CENTS = [5, 10, 20, 30, 40, 50, 75, 100, 150, 200];
 
 // 5 lignes : indices [row, col]
 const PAYLINES = [
-  [[0, 0], [0, 1], [0, 2], [0, 3], [0, 4]],
-  [[1, 0], [1, 1], [1, 2], [1, 3], [1, 4]],
-  [[2, 0], [2, 1], [2, 2], [2, 3], [2, 4]],
-  [[0, 0], [1, 1], [2, 2], [1, 3], [0, 4]],
-  [[2, 0], [1, 1], [0, 2], [1, 3], [2, 4]],
+  [[0, 0],[0, 1],[0, 2],[0, 3],[0, 4]],
+  [[1, 0],[1, 1],[1, 2],[1, 3],[1, 4]],
+  [[2, 0],[2, 1],[2, 2],[2, 3],[2, 4]],
+  [[0, 0],[1, 1],[2, 2],[1, 3],[0, 4]],
+  [[2, 0],[1, 1],[0, 2],[1, 3],[2, 4]],
 ];
 
 // Multiplicateurs (int)
@@ -134,13 +86,13 @@ const PAYTABLE = {
   1: { 3: 2, 4: 3, 5: 4 },
   3: { 3: 2, 4: 3, 5: 4 },
   7: { 3: 2, 4: 3, 5: 4 },
-  10: { 3: 2, 4: 3, 5: 4 },
+  10:{ 3: 2, 4: 3, 5: 4 },
 
   4: { 3: 3, 4: 4, 5: 5 },
   8: { 3: 4, 4: 5, 5: 6 },
   5: { 3: 10, 4: 12, 5: 14 },
   2: { 3: 16, 4: 18, 5: 20 },
-  11: { 3: 20, 4: 25, 5: 30 },
+  11:{ 3: 20, 4: 25, 5: 30 },
   0: { 3: 30, 4: 40, 5: 50 },
 };
 
@@ -179,7 +131,6 @@ function initSessionState(req) {
       winMultiplier: 1,
       lastWinCents: 0,
       spinLock: false,
-
       nonce: 0,
       serverSeed: newServerSeedHex(),
       serverSeedHash: "",
@@ -196,10 +147,7 @@ function publicState(st) {
     winMultiplier: st.winMultiplier,
     lastWinCents: st.lastWinCents,
     allowedBetsCents: ALLOWED_BETS_CENTS,
-    fair: {
-      serverSeedHash: st.serverSeedHash,
-      nonce: st.nonce,
-    },
+    fair: { serverSeedHash: st.serverSeedHash, nonce: st.nonce },
   };
 }
 
@@ -222,26 +170,18 @@ function evaluateSpinBase(grid, betCents) {
     let baseSymbol = null;
     let invalid = false;
 
-    // baseSymbol = premier symbole non-wild (bonus invalide la ligne)
     for (let i = 0; i < line.length; i++) {
       const [row, col] = line[i];
       const sym = grid[row][col];
 
-      if (sym === BONUS_ID) {
-        invalid = true;
-        break;
-      }
-      if (sym !== WILD_ID) {
-        baseSymbol = sym;
-        break;
-      }
+      if (sym === BONUS_ID) { invalid = true; break; }
+      if (sym !== WILD_ID) { baseSymbol = sym; break; }
     }
     if (invalid || baseSymbol === null) return;
 
     const table = PAYTABLE[baseSymbol];
     if (!table) return;
 
-    // compte les symboles consécutifs depuis la gauche (baseSymbol ou wild)
     let count = 0;
     for (let i = 0; i < line.length; i++) {
       const [row, col] = line[i];
@@ -343,7 +283,6 @@ app.post("/spin", (req, res) => {
     const usedNonce = st.nonce;
 
     const grid = generateGridProvablyFair(usedServerSeed, clientSeed, usedNonce);
-
     const { baseWinCents, bonusTriggered, winningLines } = evaluateSpinBase(grid, betCents);
 
     // bonus
@@ -386,9 +325,6 @@ app.post("/spin", (req, res) => {
         nextServerSeedHash: st.serverSeedHash,
       },
     });
-  } catch (err) {
-    console.error("Spin error:", err);
-    return res.status(500).json({ error: "SERVER_ERROR", ...publicState(st) });
   } finally {
     st.spinLock = false;
   }
@@ -401,6 +337,58 @@ app.get("*", (req, res) => {
   res.sendFile(path.join(__dirname, "slot_mobile_full", "index.html"));
 });
 
-app.listen(PORT, () => {
-  console.log(`Slot mobile backend running on port ${PORT}`);
+// ----------------------------
+// SESSION MIDDLEWARE + START SERVER
+// (on le fait ici en async pour que Redis soit prêt)
+// ----------------------------
+async function start() {
+  let store = undefined;
+
+  if (RedisStore && createClient && process.env.REDIS_URL) {
+    const redisClient = createClient({ url: process.env.REDIS_URL });
+
+    redisClient.on("error", (err) => {
+      console.error("Redis error:", err);
+    });
+
+    try {
+      await redisClient.connect();
+      store = new RedisStore({
+        client: redisClient,
+        prefix: "slot:sess:",
+      });
+      console.log("✅ Redis session store enabled");
+    } catch (e) {
+      console.error("❌ Redis connect failed, fallback MemoryStore:", e);
+    }
+  } else {
+    if (isProd) {
+      console.warn("⚠️ REDIS_URL absent: sessions en MemoryStore (pas idéal en prod).");
+    }
+  }
+
+  app.use(
+    session({
+      name: "slot.sid",
+      store, // undefined => MemoryStore
+      secret: process.env.SESSION_SECRET || "CHANGE_ME_IN_PROD",
+      resave: false,
+      saveUninitialized: false,
+      cookie: {
+        httpOnly: true,
+        sameSite: "lax",
+        secure: isProd, // OK avec trust proxy
+        maxAge: 1000 * 60 * 60 * 24 * 7, // 7 jours
+      },
+    })
+  );
+
+  app.listen(PORT, () => {
+    console.log(`Slot mobile backend running on port ${PORT}`);
+  });
+}
+
+start().catch((e) => {
+  console.error("Fatal start error:", e);
+  process.exit(1);
 });
