@@ -1,53 +1,46 @@
-/* Reset & base */
-* {
-  box-sizing: border-box;
+:root{
+  /* iOS 100vh fix via JS dans index.html */
+  --app-h: calc(var(--vh, 1vh) * 100);
 }
 
-html,
-body {
+html, body {
   margin: 0;
   padding: 0;
+  width: 100%;
   height: 100%;
-  background: #020617; /* bleu très foncé */
+  height: var(--app-h);
+  background: #050814;
   overflow: hidden;
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
-    sans-serif;
-  color: #e5e7eb;
-  -webkit-touch-callout: none;
-  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior: none;
+  -webkit-text-size-adjust: 100%;
+  touch-action: none;
 }
 
-/* Écran de chargement / messages d’erreur */
-#loader {
+body {
+  position: fixed;
+  inset: 0;
+}
+
+#game {
   position: absolute;
   inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  background: #050814;
+  touch-action: none;
+}
+
+#loader {
+  position: fixed;
+  inset: 0;
   display: flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
-  background: radial-gradient(circle at top, #1f2937 0, #020617 55%);
-  color: #f9fafb;
-  z-index: 10;
-  text-align: center;
-}
-
-#loader h1 {
-  font-size: 26px;
-  margin-bottom: 8px;
-}
-
-#loader p {
-  margin: 4px 0;
-  opacity: 0.85;
-}
-
-/* Canvas PIXI plein écran, responsive */
-canvas {
-  width: 100vw;
-  height: 100vh;
-  display: block;
-}
-
-canvas#game {
-  touch-action: manipulation;
+  background: rgba(0,0,0,0.55);
+  color: #fff;
+  font-family: system-ui, -apple-system, Segoe UI, sans-serif;
+  font-weight: 800;
+  font-size: 16px;
+  z-index: 9999;
 }
