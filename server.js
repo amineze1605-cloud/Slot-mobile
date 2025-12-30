@@ -25,10 +25,8 @@ const SYMBOLS_COUNT = 12; // IDs 0..11
 const WILD_ID = 9;
 const BONUS_ID = 6;
 
-// Bets autorisées (CENTIMES)
 const ALLOWED_BETS_CENTS = [5, 10, 20, 30, 40, 50, 75, 100, 150, 200];
 
-// 5 lignes : indices [row, col]
 const PAYLINES = [
   [[0, 0], [0, 1], [0, 2], [0, 3], [0, 4]],
   [[1, 0], [1, 1], [1, 2], [1, 3], [1, 4]],
@@ -37,7 +35,6 @@ const PAYLINES = [
   [[2, 0], [1, 1], [0, 2], [1, 3], [2, 4]],
 ];
 
-// Multiplicateurs (int)
 const PAYTABLE = {
   1: { 3: 2, 4: 3, 5: 4 },
   3: { 3: 2, 4: 3, 5: 4 },
@@ -122,9 +119,6 @@ function publicState(st) {
   };
 }
 
-// ----------------------------
-// Évaluation d'une grille (CENTIMES)
-// ----------------------------
 function evaluateSpinBase(grid, betCents) {
   let baseWinCents = 0;
   const winningLines = [];
@@ -247,20 +241,35 @@ async function initRedisSessionStore() {
   return new RedisStore({ client: redisClient, prefix: "slot:" });
 }
 
+// ----------------------------
+// Helpers HTTP (anti-cache API Safari)
+// ----------------------------
+function noStore(res) {
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+  res.setHeader("Pragma", "no-cache");
+  res.setHeader("Expires", "0");
+  res.setHeader("Surrogate-Control", "no-store");
+}
+
+// ----------------------------
+// MAIN
+// ----------------------------
 async function main() {
   const app = express();
 
+  // Render/Proxy HTTPS -> cookies secure OK
   app.set("trust proxy", 1);
   app.disable("x-powered-by");
 
+  // CORS OK (même domaine => pas gênant)
   app.use(cors({ origin: true, credentials: true }));
-  app.use(express.json({ limit: "128kb" }));
-
-  // anti cache (évite comportements bizarres Safari/Proxy)
   app.use((req, res, next) => {
-    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("Vary", "Origin");
+    res.setHeader("X-Content-Type-Options", "nosniff");
     next();
   });
+
+  app.use(express.json({ limit: "128kb" }));
 
   const store = await initRedisSessionStore();
 
@@ -284,15 +293,26 @@ async function main() {
       cookie: {
         httpOnly: true,
         sameSite: "lax",
-        secure: IS_PROD,          // ✅ FIX IMPORTANT (pas "auto")
+        secure: IS_PROD,
         maxAge: 1000 * 60 * 60 * 24 * 7,
       },
     })
   );
 
-  app.use(express.static(FRONT_DIR));
+  // Static: cache OK pour assets, mais index.html no-store
+  app.use(
+    express.static(FRONT_DIR, {
+      maxAge: IS_PROD ? "7d" : 0,
+      etag: true,
+      setHeaders(res, filePath) {
+        if (filePath.endsWith(".html")) noStore(res);
+      },
+    })
+  );
 
+  // ---------------- API ----------------
   app.get("/health", (req, res) => {
+    noStore(res);
     res.json({
       ok: true,
       usingRedis,
@@ -307,11 +327,13 @@ async function main() {
   });
 
   app.get("/state", (req, res) => {
+    noStore(res);
     const st = initSessionState(req);
     res.json(publicState(st));
   });
-  
-    app.post("/spin", (req, res) => {
+
+  app.post("/spin", (req, res) => {
+    noStore(res);
     const st = initSessionState(req);
 
     if (st.spinLock) {
@@ -319,7 +341,6 @@ async function main() {
     }
     st.spinLock = true;
 
-    // ✅ snapshot (rollback si crash)
     const snap = {
       balanceCents: st.balanceCents,
       freeSpins: st.freeSpins,
@@ -379,7 +400,6 @@ async function main() {
       st.lastWinCents = totalWinCents;
       st.balanceCents += totalWinCents;
 
-      // rotate seed
       st.serverSeed = newServerSeedHex();
       st.serverSeedHash = sha256Hex(st.serverSeed);
 
@@ -406,7 +426,6 @@ async function main() {
     } catch (e) {
       console.error("[/spin] error:", e?.stack || e);
 
-      // ✅ rollback
       st.balanceCents = snap.balanceCents;
       st.freeSpins = snap.freeSpins;
       st.winMultiplier = snap.winMultiplier;
@@ -423,7 +442,9 @@ async function main() {
     }
   });
 
+  // SPA fallback
   app.get("*", (req, res) => {
+    noStore(res);
     res.sendFile(path.join(FRONT_DIR, "index.html"));
   });
 
