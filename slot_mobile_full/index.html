@@ -2,22 +2,20 @@
 <html lang="fr">
 <head>
   <meta charset="UTF-8" />
-  <meta
-    name="viewport"
-    content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
-  />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="format-detection" content="telephone=no" />
   <title>Slot Mobile</title>
 
   <!-- PIXI.JS v5 -->
   <script src="https://pixijs.download/v5.3.10/pixi.min.js"></script>
-
-  <!-- PIXI FILTERS (GlowFilter, etc.) -->
+  <!-- PIXI FILTERS -->
   <script src="https://cdn.jsdelivr.net/npm/pixi-filters@4.2.0/dist/pixi-filters.min.js"></script>
 
   <link rel="stylesheet" href="style.css" />
 
   <style>
-    /* Mini console overlay */
     #miniConsole {
       position: fixed;
       left: 8px;
@@ -34,7 +32,7 @@
       z-index: 99999;
       white-space: pre-wrap;
       -webkit-overflow-scrolling: touch;
-      display: none; /* caché par défaut */
+      display: none;
     }
     #miniConsole .line { margin: 2px 0; }
     #miniConsole .log  { color: #e5e7eb; }
@@ -58,9 +56,26 @@
   <div id="loader">Chargement…</div>
   <canvas id="game"></canvas>
 
-  <!-- Mini console -->
   <div id="miniConsole"></div>
   <button id="miniConsoleToggle" type="button">Console</button>
+
+  <script>
+    // Fix iOS 100vh + safe area
+    (function () {
+      function setVh() {
+        var vh = window.innerHeight * 0.01;
+        document.documentElement.style.setProperty('--vh', vh + 'px');
+      }
+      setVh();
+      window.addEventListener('resize', setVh);
+      window.addEventListener('orientationchange', setVh);
+
+      // Empêche scroll/zoom involontaire sur iPhone (jeu fullscreen)
+      document.addEventListener('gesturestart', function (e) { e.preventDefault(); }, { passive:false });
+      document.addEventListener('gesturechange', function (e) { e.preventDefault(); }, { passive:false });
+      document.addEventListener('gestureend', function (e) { e.preventDefault(); }, { passive:false });
+    })();
+  </script>
 
   <script>
     (function () {
@@ -88,7 +103,6 @@
         box.scrollTop = box.scrollHeight;
       }
 
-      // Toggle
       if (btn) {
         btn.addEventListener("click", function () {
           if (!box) return;
@@ -96,25 +110,14 @@
         });
       }
 
-      // Hook console.*
       var _log = console.log;
       var _warn = console.warn;
       var _error = console.error;
 
-      console.log = function () {
-        addLine("log", arguments);
-        _log.apply(console, arguments);
-      };
-      console.warn = function () {
-        addLine("warn", arguments);
-        _warn.apply(console, arguments);
-      };
-      console.error = function () {
-        addLine("err", arguments);
-        _error.apply(console, arguments);
-      };
+      console.log = function () { addLine("log", arguments); _log.apply(console, arguments); };
+      console.warn = function () { addLine("warn", arguments); _warn.apply(console, arguments); };
+      console.error = function () { addLine("err", arguments); _error.apply(console, arguments); };
 
-      // Global errors
       window.addEventListener("error", function (e) {
         var msg = e && e.message ? e.message : "Erreur inconnue";
         console.error("Erreur JS:", msg);
@@ -124,13 +127,11 @@
         console.error("Erreur Promise:", e && e.reason ? e.reason : "inconnue");
       });
 
-      // Petit test utile
       console.log("PIXI OK:", !!window.PIXI);
       console.log("GlowFilter dispo:", !!(window.PIXI && PIXI.filters && PIXI.filters.GlowFilter));
     })();
   </script>
 
-  <!-- Ton jeu -->
   <script src="script.js"></script>
 </body>
 </html>
