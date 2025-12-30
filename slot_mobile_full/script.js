@@ -1,8 +1,8 @@
 // script.js — Slot mobile PIXI v5 (5x3) — PRO CASINO MODE (Render-ready)
-// ✅ AbortController timeout réel client sur /spin
+// ✅ iPhone/Safari safe: anti-cache /state, cache:no-store, iOS anti-bounce/scroll, fetch timeout réel
 // ✅ Anti double-tap iOS sur SPIN (start only)
 // ✅ Lock visuel + lock input bande de mise pendant spin
-// ✅ Protection anti “réponse tardive” (spinId) => évite ERREUR après 1er spin
+// ✅ Protection anti “réponse tardive” (spinId) => évite erreur après 1er spin
 
 PIXI.settings.ROUND_PIXELS = true;
 PIXI.settings.MIPMAP_TEXTURES = PIXI.MIPMAP_MODES.OFF;
@@ -10,6 +10,24 @@ PIXI.settings.SCALE_MODE = PIXI.SCALE_MODES.LINEAR;
 
 const canvas = document.getElementById("game");
 const loaderEl = document.getElementById("loader");
+
+// ------------------ iOS/Safari: anti scroll/bounce + touch-action ------------------
+(function iosTouchFix() {
+  try {
+    if (canvas) canvas.style.touchAction = "none";
+    document.body.style.overflow = "hidden";
+    document.documentElement.style.overflow = "hidden";
+
+    // Empêche le “bounce” Safari iOS pendant le jeu
+    window.addEventListener(
+      "touchmove",
+      (e) => {
+        if (e.cancelable) e.preventDefault();
+      },
+      { passive: false }
+    );
+  } catch (_) {}
+})();
 
 let app;
 let symbolTextures = [];
@@ -142,13 +160,18 @@ function hideMessage() {
   loaderEl.style.display = "none";
 }
 
-// ------------------ fetch timeout (AbortController) ------------------
+// ------------------ fetch timeout (AbortController) — Safari safe ------------------
 async function fetchJsonWithTimeout(url, fetchOpts = {}, timeoutMs = 3000) {
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const r = await fetch(url, { ...fetchOpts, signal: controller.signal });
+    const r = await fetch(url, {
+      cache: "no-store",
+      headers: { "Accept": "application/json", ...(fetchOpts.headers || {}) },
+      ...fetchOpts,
+      signal: controller.signal,
+    });
 
     let data = null;
     try { data = await r.json(); }
@@ -175,10 +198,11 @@ function canStartSpinNow() {
 }
 
 // ------------------ spritesheet ------------------
+const ASSET_VER = "11";
 function loadSpritesheet() {
   return new Promise((resolve, reject) => {
     const img = new Image();
-    img.src = "assets/spritesheet.png?v=11";
+    img.src = `assets/spritesheet.png?v=${ASSET_VER}`;
     img.onload = () => {
       try {
         const baseTexture = PIXI.BaseTexture.from(img);
@@ -233,10 +257,15 @@ let hud = {
   _betLocked: false,
 };
 
-// ------------------ sync state serveur ------------------
+// ------------------ sync state serveur (Safari anti-cache) ------------------
 async function syncStateFromServer({ clearError = true } = {}) {
   try {
-    const r = await fetch("/state", { credentials: "include" });
+    const url = `/state?_=${Date.now()}`; // ✅ anti-cache Safari
+    const r = await fetch(url, {
+      credentials: "include",
+      cache: "no-store",
+      headers: { "Accept": "application/json" },
+    });
     if (!r.ok) throw new Error(`HTTP_${r.status}`);
     const data = await r.json();
 
@@ -326,7 +355,8 @@ async function initPixi() {
     hudUpdateFsBadge();
 
     app.ticker.add(updateHighlight);
-    window.addEventListener("resize", rebuildAll);
+    window.addEventListener("resize", rebuildAll, { passive: true });
+    window.addEventListener("orientationchange", rebuildAll, { passive: true });
   } catch (e) {
     console.error("Erreur chargement", e);
     showMessage("Erreur chargement assets (" + (e?.message || String(e)) + ")");
@@ -1230,7 +1260,7 @@ function togglePaytable() {
   const bodyText =
 `Fruits : 3=2x | 4=3x | 5=4x
 
-Cartes : 3x | 4x | 5x
+Cartes : 3=2x | 4=3x | 5=4x
 Pièce : 4x | 5x | 6x
 Couronne : 10x | 12x | 14x
 BAR : 16x | 18x | 20x
@@ -1607,7 +1637,6 @@ async function spinRequestToServer(spinId, preset) {
 
   if (data?.error) {
     pendingOutcome = { error: data.error, ...data };
-    // fallback grid -> anim termine proprement
     pendingGrid = captureVisibleGrid();
     gridArrivedAt = performance.now();
     ensurePlansAfterGrid(preset);
@@ -1636,6 +1665,7 @@ function mapErrorToStatus(err) {
   if (err === "BET_NOT_ALLOWED") return "MISE NON AUTORISÉE";
   if (err === "TIMEOUT") return "TIMEOUT RÉSEAU";
   if (err === "NETWORK_ERROR") return "ERREUR RÉSEAU";
+  if (err === "SPIN_IN_PROGRESS") return "SPIN DÉJÀ EN COURS";
   return "ERREUR SERVEUR";
 }
 
