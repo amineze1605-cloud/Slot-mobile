@@ -902,7 +902,7 @@ function hudUpdateNumbers() {
   if (hud.betChips?.length) hud.betChips.forEach((c) => setChipSelected(c, c._valueCents === betCents));
 }
 
-// ------------------ HUD build ------------------
+// ------------------ HUD build (COMPLET & CORRIGÉ) ------------------
 function buildHUD() {
   const w = app.screen.width;
   const h = app.screen.height;
@@ -920,7 +920,6 @@ function buildHUD() {
   hud.topPanel = makeRoundedPanel(topW, topH, 16);
   hud.topPanel.x = Math.round(w - topW - 12);
   hud.topPanel.y = safeTop + 6;
-  hud.topPanel.visible = false; // important
 
   hud.fsBadge = new PIXI.Text("", new PIXI.TextStyle({
     fontFamily: "ui-monospace, Menlo, monospace",
@@ -955,69 +954,58 @@ function buildHUD() {
 
   hud.root.addChild(hudBuildBetBand(bandX, bandY, bandW, bandH));
 
-  // panneau SOLDE/GAIN (plus compact + anti chevauchements)
+  // =======================
+  // ✅ panneau SOLDE/GAIN (anti chevauchements dynamique)
+  // =======================
   const meterW = bandW;
   const meterH = Math.round(Math.max(66, h * 0.082)); // ✅ plus petit
   const meterX = bandX;
   const meterY = Math.round(bandY - meterH - 10);
+
+  hud._meterW = meterW;
+  hud._meterH = meterH;
+  hud._statusBaseSize = Math.round(meterH * 0.22);
 
   hud.meterPanel = makeRoundedPanel(meterW, meterH, 18);
   hud.meterPanel.x = meterX;
   hud.meterPanel.y = meterY;
   hud.root.addChild(hud.meterPanel);
 
-  const reserveSide = Math.round(meterW * 0.30); // zone réservée gauche/droite
-  const centerW = meterW - reserveSide * 2;
-
-  // SOLDE
-  const soldeLabel = new PIXI.Text("SOLDE:", makeTextStyleLabel(Math.round(meterH * 0.20)));
-  soldeLabel.x = 14;
-  soldeLabel.y = 8;
-
+  // --- TEXTES (refs stockées dans hud pour re-layout dynamique) ---
+  hud.soldeLabel = new PIXI.Text("SOLDE:", makeTextStyleLabel(Math.round(meterH * 0.20)));
   hud.soldeValue = new PIXI.Text(fmtMoneyFromCents(balanceCents), makeTextStyleValue(Math.round(meterH * 0.44)));
-  hud.soldeValue.x = 14;
-  hud.soldeValue.y = soldeLabel.y + soldeLabel.height + 1;
+  hud.soldeEur   = new PIXI.Text("EUR", makeTextStyleLabel(Math.round(meterH * 0.17)));
 
-  const soldeEur = new PIXI.Text("EUR", makeTextStyleLabel(Math.round(meterH * 0.17)));
-  soldeEur.x = 14;
-  soldeEur.y = hud.soldeValue.y + hud.soldeValue.height - 3;
+  hud.gainLabel  = new PIXI.Text("DERNIER GAIN:", makeTextStyleLabel(Math.round(meterH * 0.20)));
+  hud.gainValue  = new PIXI.Text(fmtMoneyFromCents(lastWinCents), makeTextStyleValue(Math.round(meterH * 0.44)));
+  hud.gainEur    = new PIXI.Text("EUR", makeTextStyleLabel(Math.round(meterH * 0.17)));
 
-  // DERNIER GAIN
-  const gainLabel = new PIXI.Text("DERNIER GAIN:", makeTextStyleLabel(Math.round(meterH * 0.20)));
-  gainLabel.anchor.set(1, 0);
-  gainLabel.x = meterW - 14;
-  gainLabel.y = 8;
-
-  hud.gainValue = new PIXI.Text(fmtMoneyFromCents(lastWinCents), makeTextStyleValue(Math.round(meterH * 0.44)));
-  hud.gainValue.anchor.set(1, 0);
-  hud.gainValue.x = meterW - 14;
-  hud.gainValue.y = gainLabel.y + gainLabel.height + 1;
-
-  const gainEur = new PIXI.Text("EUR", makeTextStyleLabel(Math.round(meterH * 0.17)));
-  gainEur.anchor.set(1, 0);
-  gainEur.x = meterW - 14;
-  gainEur.y = hud.gainValue.y + hud.gainValue.height - 3;
-
-  // STATUT (centré + wrap large => plus de chevauchement)
+  // STATUT (centré, recalculé ensuite par hudLayoutMeterPanel())
   hud.statusText = new PIXI.Text("METTEZ VOTRE MISE", new PIXI.TextStyle({
     fontFamily: "system-ui",
-    fontSize: Math.round(meterH * 0.22),
+    fontSize: hud._statusBaseSize,
     fill: 0xffffff,
     fontWeight: "900",
     stroke: 0x000000,
     strokeThickness: 2,
     align: "center",
     wordWrap: true,
-    wordWrapWidth: Math.round(centerW * 0.98),
-    lineHeight: Math.round(meterH * 0.24),
+    wordWrapWidth: Math.round(meterW * 0.40), // provisoire, recalculée dans hudLayoutMeterPanel()
+    lineHeight: Math.round(hud._statusBaseSize * 1.12),
   }));
-  hud.statusText.anchor.set(0.5, 0.5);
-  hud.statusText.x = reserveSide + centerW / 2;
-  hud.statusText.y = meterH * 0.52;
 
-  hud.meterPanel.addChild(soldeLabel, hud.soldeValue, soldeEur, hud.statusText, gainLabel, hud.gainValue, gainEur);
+  hud.meterPanel.addChild(
+    hud.soldeLabel, hud.soldeValue, hud.soldeEur,
+    hud.statusText,
+    hud.gainLabel, hud.gainValue, hud.gainEur
+  );
 
+  // ✅ applique le layout final (anti chevauchements)
+  hudLayoutMeterPanel();
+
+  // =======================
   // boutons
+  // =======================
   hud.btnSpin = makeRoundButton(hud._spinDiam);
   hud.btnSpin.x = Math.round(w / 2);
   hud.btnSpin.y = spinY;
@@ -1056,6 +1044,7 @@ function buildHUD() {
 
   hud.btnInfo.on("pointerup", () => togglePaytable());
 
+  // ✅ final sync
   hudUpdateNumbers();
   hudUpdateFsBadge();
   hudSetBetBandLocked(spinning);
