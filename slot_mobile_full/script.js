@@ -901,7 +901,12 @@ function setChipSelected(chip, selected) {
 function hudUpdateNumbers() {
   if (hud.soldeValue) hud.soldeValue.text = fmtMoneyFromCents(balanceCents);
   if (hud.gainValue) hud.gainValue.text = fmtMoneyFromCents(lastWinCents);
-  if (hud.betChips?.length) hud.betChips.forEach((c) => setChipSelected(c, c._valueCents === betCents));
+
+  if (hud.betChips?.length) {
+    hud.betChips.forEach((c) => setChipSelected(c, c._valueCents === betCents));
+  }
+
+  hudLayoutMeterPanel(); // ✅ important après update des valeurs
 }
 
 // ------------------ HUD build (COMPLET & CORRIGÉ) ------------------
@@ -922,7 +927,10 @@ function buildHUD() {
   hud.topPanel = makeRoundedPanel(topW, topH, 16);
   hud.topPanel.x = Math.round(w - topW - 12);
   hud.topPanel.y = safeTop + 6;
-
+  hud.topPanel.visible = false;
+  hud.topPanel.renderable = false;
+  hud.topPanel.alpha = 0.0;
+  
   hud.fsBadge = new PIXI.Text("", new PIXI.TextStyle({
     fontFamily: "ui-monospace, Menlo, monospace",
     fontSize: Math.round(topH * 0.42),
