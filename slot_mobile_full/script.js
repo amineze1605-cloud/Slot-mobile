@@ -781,6 +781,18 @@ function hudLayoutMeterPanel() {
 
   const padX = 14;
   const topY = 8;
+  const bottomPad = 8;
+
+  // Force updateText pour avoir des tailles fiables
+  hud.soldeLabel?.updateText?.();
+  hud.soldeValue?.updateText?.();
+  hud.soldeEur?.updateText?.();
+
+  hud.gainLabel?.updateText?.();
+  hud.gainValue?.updateText?.();
+  hud.gainEur?.updateText?.();
+
+  hud.statusText?.updateText?.();
 
   // Mesure réserve gauche/droite selon largeur réelle
   const leftMaxW =
@@ -806,31 +818,47 @@ function hudLayoutMeterPanel() {
   const centerW = Math.max(40, meterW - reserveSide * 2);
 
   // --- SOLDE (gauche) ---
-  if (hud.soldeLabel) { hud.soldeLabel.x = padX; hud.soldeLabel.y = topY; }
-
-  if (hud.soldeValue) {
-    hud.soldeValue.x = padX;
-    hud.soldeValue.y = (hud.soldeLabel?.y || topY) + (hud.soldeLabel?.height || 0) + 1;
+  if (hud.soldeLabel) {
+    hud.soldeLabel.anchor.set(0, 0);
+    hud.soldeLabel.x = padX;
+    hud.soldeLabel.y = topY;
   }
 
+  // EUR: toujours DANS le cadre (bas gauche)
   if (hud.soldeEur) {
+    hud.soldeEur.anchor.set(0, 1);
     hud.soldeEur.x = padX;
-    hud.soldeEur.y = (hud.soldeValue?.y || 0) + (hud.soldeValue?.height || 0) - 2;
+    hud.soldeEur.y = meterH - bottomPad;
+  }
+
+  // Valeur: juste au-dessus du EUR, mais jamais au-dessus du label
+  if (hud.soldeValue) {
+    hud.soldeValue.anchor.set(0, 0);
+    const minY = (hud.soldeLabel?.y || topY) + (hud.soldeLabel?.height || 0) + 2;
+    const valueTop = (hud.soldeEur?.y || (meterH - bottomPad)) - (hud.soldeEur?.height || 0) - 2 - hud.soldeValue.height;
+    hud.soldeValue.x = padX;
+    hud.soldeValue.y = Math.max(minY, Math.round(valueTop));
   }
 
   // --- GAIN (droite) ---
-  if (hud.gainLabel) { hud.gainLabel.anchor.set(1, 0); hud.gainLabel.x = meterW - padX; hud.gainLabel.y = topY; }
-
-  if (hud.gainValue) {
-    hud.gainValue.anchor.set(1, 0);
-    hud.gainValue.x = meterW - padX;
-    hud.gainValue.y = (hud.gainLabel?.y || topY) + (hud.gainLabel?.height || 0) + 1;
+  if (hud.gainLabel) {
+    hud.gainLabel.anchor.set(1, 0);
+    hud.gainLabel.x = meterW - padX;
+    hud.gainLabel.y = topY;
   }
 
   if (hud.gainEur) {
-    hud.gainEur.anchor.set(1, 0);
+    hud.gainEur.anchor.set(1, 1);
     hud.gainEur.x = meterW - padX;
-    hud.gainEur.y = (hud.gainValue?.y || 0) + (hud.gainValue?.height || 0) - 2;
+    hud.gainEur.y = meterH - bottomPad;
+  }
+
+  if (hud.gainValue) {
+    hud.gainValue.anchor.set(1, 0);
+    const minY = (hud.gainLabel?.y || topY) + (hud.gainLabel?.height || 0) + 2;
+    const valueTop = (hud.gainEur?.y || (meterH - bottomPad)) - (hud.gainEur?.height || 0) - 2 - hud.gainValue.height;
+    hud.gainValue.x = meterW - padX;
+    hud.gainValue.y = Math.max(minY, Math.round(valueTop));
   }
 
   // --- STATUT (centre) ---
@@ -852,7 +880,6 @@ function hudLayoutMeterPanel() {
   style.lineHeight = Math.round(fontSize * 1.12);
   hud.statusText.updateText();
 
-  // Réduit la taille si ça dépasse en hauteur
   while (hud.statusText.height > maxH && fontSize > minSize) {
     fontSize -= 1;
     style.fontSize = fontSize;
@@ -860,7 +887,6 @@ function hudLayoutMeterPanel() {
     hud.statusText.updateText();
   }
 
-  // Si c’est encore trop haut => 1 ligne + ellipsis
   if (hud.statusText.height > maxH) {
     style.wordWrap = false;
     style.fontSize = minSize;
