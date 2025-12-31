@@ -1,9 +1,8 @@
 // script.js — Slot mobile PIXI v5 (5x3) — PRO CASINO MODE (Render-ready)
 // ✅ Boutons = icônes (plus de texte)
 // ✅ Cache le cadre top-right quand pas de free spins
-// ✅ Panels SOLDE / GAIN : textes bien placés (EUR ancré bas dans le cadre)
-// ✅ Ligne des mises: style “slot ref” + 5 mises visibles fixes + scroll
-// ✅ Lock mise: overlay clean (pas de gros texte sur les mises)
+// ✅ SOLDE/GAIN sans cadre (meilleur placement, plus clean)
+// ✅ Ligne des mises sans cadre global : cards individuelles + scroll + snap gauche + demi-card visible à droite
 
 PIXI.settings.ROUND_PIXELS = true;
 PIXI.settings.MIPMAP_TEXTURES = PIXI.MIPMAP_MODES.OFF;
@@ -203,9 +202,11 @@ let hud = {
 
   meterPanel: null,
   statusText: null,
+
   soldeLabel: null,
   soldeValue: null,
   soldeEur: null,
+
   gainLabel: null,
   gainValue: null,
   gainEur: null,
@@ -223,13 +224,10 @@ let hud = {
 
   _spinDiam: 0,
   _sideDiam: 0,
+
   _chipW: 0,
   _chipH: 0,
   _chipGap: 0,
-
-  _meterW: 0,
-  _meterH: 0,
-  _statusBaseSize: 0,
 
   _betScrollX: 0,
   _betDrag: null,
@@ -239,8 +237,11 @@ let hud = {
   _betContentW: 0,
   _betBandW: 0,
   _betLeftPad: 16,
-  _betRightPad: 16,
   _betLocked: false,
+
+  _meterW: 0,
+  _meterH: 0,
+  _statusBaseSize: 0,
 };
 
 // ------------------ sync state serveur ------------------
@@ -297,7 +298,6 @@ async function initPixi() {
   });
   app.renderer.roundPixels = true;
 
-  // iOS: évite certains comportements “touch” gênants
   if (app.renderer?.plugins?.interaction) {
     app.renderer.plugins.interaction.autoPreventDefault = false;
   }
@@ -562,10 +562,10 @@ function makeTextStyleLabel(size) {
     fill: 0xF3F4F6,
     fontWeight: "700",
     stroke: 0x000000,
-    strokeThickness: 1,
+    strokeThickness: 2,
     dropShadow: true,
-    dropShadowAlpha: 0.18,
-    dropShadowBlur: 2,
+    dropShadowAlpha: 0.22,
+    dropShadowBlur: 3,
     dropShadowDistance: 1,
   });
 }
@@ -576,10 +576,10 @@ function makeTextStyleValue(size) {
     fill: 0xFFFFFF,
     fontWeight: "900",
     stroke: 0x000000,
-    strokeThickness: 2,
+    strokeThickness: 3,
     dropShadow: true,
-    dropShadowAlpha: 0.22,
-    dropShadowBlur: 3,
+    dropShadowAlpha: 0.26,
+    dropShadowBlur: 4,
     dropShadowDistance: 1,
   });
 }
@@ -717,7 +717,6 @@ function iconSpeed(btn, diam, level01) {
   const g = new PIXI.Graphics();
   const s = diam * 0.12;
   const gap = diam * 0.07;
-  const y = 0;
 
   const n = 3;
   const active = Math.max(1, Math.min(3, Math.round(1 + level01 * 2))); // 1..3
@@ -727,9 +726,9 @@ function iconSpeed(btn, diam, level01) {
     const a = i < active ? 0.95 : 0.28;
     g.beginFill(0xffffff, a);
     g.drawPolygon([
-      x - s * 0.35, y - s * 0.55,
-      x + s * 0.55, y,
-      x - s * 0.35, y + s * 0.55
+      x - s * 0.35, - s * 0.55,
+      x + s * 0.55, 0,
+      x - s * 0.35, + s * 0.55
     ]);
     g.endFill();
   }
@@ -759,10 +758,10 @@ function hudRefreshSpeedButtonLabel() {
 function hudSetStatusMessage(msg) {
   if (!hud.statusText) return;
   hud.statusText.text = String(msg || "");
-  hudLayoutMeterPanel(); // ✅ recalc positions + taille après changement
+  hudLayoutMeterPanel(); // recalcul
 }
 
-// ================== HUD LAYOUT (ANTI CHEVAUCHEMENT) + FS BADGE ==================
+// ================== HUD LAYOUT (SOLDE/GAIN sans cadre) ==================
 function measureTextW(str, style) {
   try {
     return PIXI.TextMetrics.measureText(String(str || ""), style).width || 0;
@@ -777,107 +776,50 @@ function ellipsizePixi(str, style, maxW) {
 
   const ell = "…";
   let s = s0;
-  while (s.length > 1 && measureTextW(s + ell, style) > maxW) s = s.slice(0, -1);
+  while (s.length > 1 && measureTextW(s + ell, style) > maxW) {
+    s = s.slice(0, -1);
+  }
   return (s.length ? s : s0.slice(0, 1)) + ell;
 }
 
-// ✅ SOLDE/GAIN: EUR ancré bas DANS le cadre (ne sort plus)
+// ✅ Layout ultra stable (plus de chevauchements)
 function hudLayoutMeterPanel() {
-  if (!hud.meterPanel || !hud.statusText || !hud.soldeValue || !hud.gainValue) return;
+  if (!hud.meterPanel || !hud.statusText) return;
 
-  const meterW = hud._meterW || hud.meterPanel.width;
-  const meterH = hud._meterH || hud.meterPanel.height;
+  const meterW = hud._meterW || Math.max(320, app.screen.width);
+  const meterH = hud._meterH || 78;
 
-  const padX = 14;
-  const topY = 8;
-  const bottomPad = 8;
+  const padX = 16;
+  const baseY = 0;
 
-  hud.soldeLabel?.updateText?.();
-  hud.soldeValue?.updateText?.();
-  hud.soldeEur?.updateText?.();
-  hud.gainLabel?.updateText?.();
-  hud.gainValue?.updateText?.();
-  hud.gainEur?.updateText?.();
-  hud.statusText?.updateText?.();
-
-  const leftMaxW =
-    Math.max(
-      hud.soldeLabel?.width || 0,
-      hud.soldeValue?.width || 0,
-      hud.soldeEur?.width || 0
-    ) + padX * 2;
-
-  const rightMaxW =
-    Math.max(
-      hud.gainLabel?.width || 0,
-      hud.gainValue?.width || 0,
-      hud.gainEur?.width || 0
-    ) + padX * 2;
-
-  let reserveSide = Math.max(leftMaxW, rightMaxW);
-
-  const minReserve = Math.round(meterW * 0.26);
-  const maxReserve = Math.round(meterW * 0.40);
-  reserveSide = Math.max(minReserve, Math.min(maxReserve, reserveSide));
-
-  const centerW = Math.max(40, meterW - reserveSide * 2);
+  // zones gauche/droite
+  const reserveSide = Math.round(Math.max(meterW * 0.30, 130));
+  const centerW = Math.max(60, meterW - reserveSide * 2);
 
   // --- SOLDE (gauche) ---
-  if (hud.soldeLabel) {
-    hud.soldeLabel.anchor.set(0, 0);
-    hud.soldeLabel.x = padX;
-    hud.soldeLabel.y = topY;
-  }
-
-  if (hud.soldeEur) {
-    hud.soldeEur.anchor.set(0, 1);
-    hud.soldeEur.x = padX;
-    hud.soldeEur.y = meterH - bottomPad;
-  }
-
-  if (hud.soldeValue) {
-    hud.soldeValue.anchor.set(0, 0);
-    const minY = (hud.soldeLabel?.y || topY) + (hud.soldeLabel?.height || 0) + 2;
-    const valueTop = (hud.soldeEur?.y || (meterH - bottomPad)) - (hud.soldeEur?.height || 0) - 2 - hud.soldeValue.height;
-    hud.soldeValue.x = padX;
-    hud.soldeValue.y = Math.max(minY, Math.round(valueTop));
-  }
+  if (hud.soldeLabel) { hud.soldeLabel.anchor.set(0, 0); hud.soldeLabel.x = padX; hud.soldeLabel.y = baseY + 2; }
+  if (hud.soldeValue) { hud.soldeValue.anchor.set(0, 0); hud.soldeValue.x = padX; hud.soldeValue.y = baseY + Math.round(meterH * 0.30); }
+  if (hud.soldeEur)   { hud.soldeEur.anchor.set(0, 0);   hud.soldeEur.x   = padX; hud.soldeEur.y   = baseY + Math.round(meterH * 0.78); }
 
   // --- GAIN (droite) ---
-  if (hud.gainLabel) {
-    hud.gainLabel.anchor.set(1, 0);
-    hud.gainLabel.x = meterW - padX;
-    hud.gainLabel.y = topY;
-  }
-
-  if (hud.gainEur) {
-    hud.gainEur.anchor.set(1, 1);
-    hud.gainEur.x = meterW - padX;
-    hud.gainEur.y = meterH - bottomPad;
-  }
-
-  if (hud.gainValue) {
-    hud.gainValue.anchor.set(1, 0);
-    const minY = (hud.gainLabel?.y || topY) + (hud.gainLabel?.height || 0) + 2;
-    const valueTop = (hud.gainEur?.y || (meterH - bottomPad)) - (hud.gainEur?.height || 0) - 2 - hud.gainValue.height;
-    hud.gainValue.x = meterW - padX;
-    hud.gainValue.y = Math.max(minY, Math.round(valueTop));
-  }
+  if (hud.gainLabel) { hud.gainLabel.anchor.set(1, 0); hud.gainLabel.x = meterW - padX; hud.gainLabel.y = baseY + 2; }
+  if (hud.gainValue) { hud.gainValue.anchor.set(1, 0); hud.gainValue.x = meterW - padX; hud.gainValue.y = baseY + Math.round(meterH * 0.30); }
+  if (hud.gainEur)   { hud.gainEur.anchor.set(1, 0);   hud.gainEur.x   = meterW - padX; hud.gainEur.y   = baseY + Math.round(meterH * 0.78); }
 
   // --- STATUT (centre) ---
   hud.statusText.anchor.set(0.5, 0.5);
   hud.statusText.x = reserveSide + centerW / 2;
-  hud.statusText.y = meterH * 0.52;
+  hud.statusText.y = baseY + Math.round(meterH * 0.54);
 
   const style = hud.statusText.style;
   const maxW = Math.round(centerW * 0.98);
-  const maxH = Math.round(meterH * 0.58);
+  const maxH = Math.round(meterH * 0.70);
 
   style.wordWrap = true;
   style.wordWrapWidth = maxW;
 
-  let fontSize = hud._statusBaseSize || Math.round(meterH * 0.22);
-  const minSize = Math.max(12, Math.round(meterH * 0.16));
+  let fontSize = hud._statusBaseSize || Math.round(meterH * 0.24);
+  const minSize = Math.max(12, Math.round(meterH * 0.18));
 
   style.fontSize = fontSize;
   style.lineHeight = Math.round(fontSize * 1.12);
@@ -921,86 +863,10 @@ function hudUpdateFsBadge() {
   }
 }
 
-// ================== BET CHIP (STYLE “PHOTO”) ==================
-function makeBetChip(valueCents, w, h) {
-  const c = new PIXI.Container();
-  c.interactive = true;
-  c.buttonMode = true;
-
-  const radius = Math.min(14, h * 0.34);
-
-  const bg = new PIXI.Graphics();
-  const gloss = new PIXI.Graphics();
-  const border = new PIXI.Graphics();
-
-  function draw(selected) {
-    bg.clear();
-    gloss.clear();
-    border.clear();
-
-    // fond
-    bg.beginFill(selected ? 0x166534 : 0x0b1220, selected ? 0.92 : 0.90);
-    bg.drawRoundedRect(-w / 2, -h / 2, w, h, radius);
-    bg.endFill();
-
-    // reflet haut
-    gloss.beginFill(0xffffff, selected ? 0.08 : 0.06);
-    gloss.drawRoundedRect(-w / 2 + 3, -h / 2 + 3, w - 6, h * 0.34, Math.max(8, radius - 3));
-    gloss.endFill();
-
-    // bordure
-    border.lineStyle(2, selected ? 0x22c55e : 0xf2b632, 1);
-    border.drawRoundedRect(-w / 2, -h / 2, w, h, radius);
-
-    c.alpha = selected ? 1.0 : 0.98;
-  }
-
-  const eur = new PIXI.Text("EUR", new PIXI.TextStyle({
-    fontFamily: "system-ui",
-    fontSize: Math.round(h * 0.18),
-    fill: 0xffffff,
-    fontWeight: "900",
-    stroke: 0x000000,
-    strokeThickness: 3,
-  }));
-  eur.anchor.set(0.5);
-  eur.y = -h * 0.31;
-
-  const val = new PIXI.Text(fmtMoneyFromCents(valueCents), new PIXI.TextStyle({
-    fontFamily: "ui-monospace, Menlo, monospace",
-    fontSize: Math.round(h * 0.50),
-    fill: 0xffffff,
-    fontWeight: "900",
-    stroke: 0x000000,
-    strokeThickness: 4,
-    letterSpacing: 1,
-  }));
-  val.anchor.set(0.5);
-  val.y = -h * 0.05;
-
-  const mise = new PIXI.Text("MISE", new PIXI.TextStyle({
-    fontFamily: "system-ui",
-    fontSize: Math.round(h * 0.20),
-    fill: 0xf2b632,
-    fontWeight: "900",
-    stroke: 0x000000,
-    strokeThickness: 3,
-  }));
-  mise.anchor.set(0.5);
-  mise.y = h * 0.31;
-
-  c.addChild(bg, gloss, border, eur, val, mise);
-
-  c._draw = draw;
-  c._valueCents = valueCents;
-
-  draw(false);
-  return c;
-}
-
 function setChipSelected(chip, selected) {
-  if (!chip) return;
-  if (chip._draw) chip._draw(!!selected);
+  if (!chip?._bg) return;
+  chip._bg.tint = selected ? 0x22c55e : 0xffffff;
+  chip._bg.alpha = selected ? 1.0 : 0.95;
 }
 
 function hudUpdateNumbers() {
@@ -1025,7 +891,7 @@ function buildHUD() {
   hud.root = new PIXI.Container();
   app.stage.addChild(hud.root);
 
-  // ✅ mini bandeau FS (invisible si freeSpins==0)
+  // ✅ mini bandeau FS
   const topW = Math.min(w * 0.46, 260);
   const topH = Math.max(30, Math.round(h * 0.040));
 
@@ -1052,58 +918,56 @@ function buildHUD() {
   hud.topPanel.addChild(hud.fsBadge);
   hud.root.addChild(hud.topPanel);
 
-  // tailles boutons (compact)
+  // tailles boutons
   hud._spinDiam = Math.round(Math.min(w * 0.235, h * 0.120));
   hud._sideDiam = Math.round(hud._spinDiam * 0.62);
   const spinY = Math.round(h - safeBottom - hud._spinDiam / 2 - 10);
 
-  // ✅ bande de mises (5 visibles fixes + scroll)
-  const bandW = Math.min(w * 0.92, 700);
-  const bandH = Math.round(Math.max(58, h * 0.074));
-  const bandX = Math.round((w - bandW) / 2);
+  // ✅ chips : calcul pour avoir ~4.5 visibles (dernier à moitié coupé)
+  hud._chipGap = Math.round(Math.max(8, w * 0.020));
+  const targetVisible = 4.5;
+  const usableW = w - 24; // petite marge globale
+  hud._chipW = clampInt((usableW - (Math.round(targetVisible) - 1) * hud._chipGap) / targetVisible, 70, 98);
+  hud._chipH = clampInt(Math.round(Math.max(58, h * 0.072)), 58, 78);
+
+  // ✅ ligne des mises = plein écran, snap gauche
+  const bandW = w;
+  const bandH = hud._chipH + 10; // juste pour hitArea + overlay
+  const bandX = 0;
   const bandY = Math.round(spinY - hud._spinDiam / 2 - bandH - 10);
-
-  // réglages pads (sert aussi au calcul “5 fixes”)
-  hud._betLeftPad = 16;
-  hud._betRightPad = 16;
-
-  // calc chip W pour que 5 rentrent toujours
-  const VISIBLE_CHIPS = 5;
-  const guessGap = clampInt(Math.round(bandW * 0.018), 10, 16);
-  const rawChipW = Math.floor((bandW - hud._betLeftPad - hud._betRightPad - guessGap * (VISIBLE_CHIPS - 1)) / VISIBLE_CHIPS);
-
-  hud._chipW = clampInt(rawChipW, 64, 96);
-  hud._chipH = clampInt(Math.round(h * 0.066), 52, 74);
-  hud._chipGap = clampInt(Math.round(hud._chipW * 0.12), 10, 16);
-
-  // recalc fin avec gap final
-  const chipW2 = Math.floor((bandW - hud._betLeftPad - hud._betRightPad - hud._chipGap * (VISIBLE_CHIPS - 1)) / VISIBLE_CHIPS);
-  hud._chipW = clampInt(chipW2, 64, 96);
 
   hud.root.addChild(hudBuildBetBand(bandX, bandY, bandW, bandH));
 
-  // ✅ panneau SOLDE/GAIN
-  const meterW = bandW;
-  const meterH = Math.round(Math.max(66, h * 0.082));
-  const meterX = bandX;
-  const meterY = Math.round(bandY - meterH - 10);
+  // ✅ zone SOLDE/GAIN sans cadre (pleine largeur)
+  const meterW = w;
+  const meterH = clampInt(Math.round(Math.max(74, h * 0.088)), 74, 96);
+  const meterX = 0;
+  const meterY = Math.round(bandY - meterH - 8);
 
   hud._meterW = meterW;
   hud._meterH = meterH;
-  hud._statusBaseSize = Math.round(meterH * 0.22);
+  hud._statusBaseSize = Math.round(meterH * 0.24);
 
-  hud.meterPanel = makeRoundedPanel(meterW, meterH, 18);
+  hud.meterPanel = new PIXI.Container();
   hud.meterPanel.x = meterX;
   hud.meterPanel.y = meterY;
+
+  // hit invisible (stabilise la zone)
+  const hit = new PIXI.Graphics();
+  hit.beginFill(0xffffff, 0.001);
+  hit.drawRect(0, 0, meterW, meterH);
+  hit.endFill();
+  hud.meterPanel.addChild(hit);
+
   hud.root.addChild(hud.meterPanel);
 
-  hud.soldeLabel = new PIXI.Text("SOLDE:", makeTextStyleLabel(Math.round(meterH * 0.20)));
+  hud.soldeLabel = new PIXI.Text("SOLDE:", makeTextStyleLabel(Math.round(meterH * 0.22)));
   hud.soldeValue = new PIXI.Text(fmtMoneyFromCents(balanceCents), makeTextStyleValue(Math.round(meterH * 0.44)));
-  hud.soldeEur   = new PIXI.Text("EUR", makeTextStyleLabel(Math.round(meterH * 0.17)));
+  hud.soldeEur   = new PIXI.Text("EUR", makeTextStyleLabel(Math.round(meterH * 0.18)));
 
-  hud.gainLabel  = new PIXI.Text("DERNIER GAIN:", makeTextStyleLabel(Math.round(meterH * 0.20)));
+  hud.gainLabel  = new PIXI.Text("DERNIER GAIN:", makeTextStyleLabel(Math.round(meterH * 0.22)));
   hud.gainValue  = new PIXI.Text(fmtMoneyFromCents(lastWinCents), makeTextStyleValue(Math.round(meterH * 0.44)));
-  hud.gainEur    = new PIXI.Text("EUR", makeTextStyleLabel(Math.round(meterH * 0.17)));
+  hud.gainEur    = new PIXI.Text("EUR", makeTextStyleLabel(Math.round(meterH * 0.18)));
 
   hud.statusText = new PIXI.Text("METTEZ VOTRE MISE", new PIXI.TextStyle({
     fontFamily: "system-ui",
@@ -1111,7 +975,7 @@ function buildHUD() {
     fill: 0xffffff,
     fontWeight: "900",
     stroke: 0x000000,
-    strokeThickness: 2,
+    strokeThickness: 3,
     align: "center",
     wordWrap: true,
     wordWrapWidth: Math.round(meterW * 0.40),
@@ -1126,7 +990,7 @@ function buildHUD() {
 
   hudLayoutMeterPanel();
 
-  // boutons
+  // ✅ boutons
   hud.btnSpin = makeRoundButton(hud._spinDiam);
   hud.btnSpin.x = Math.round(w / 2);
   hud.btnSpin.y = spinY;
@@ -1137,10 +1001,8 @@ function buildHUD() {
   hud.btnSpin.on("pointerupoutside", (e) => { e?.stopPropagation?.(); });
 
   hud.btnSpeed = makeRoundButton(hud._sideDiam);
-  hud.root.addChild(hud.btnSpeed);
-
-  hud.btnInfo = makeRoundButton(hud._sideDiam);
-  hud.root.addChild(hud.btnInfo);
+  hud.btnInfo  = makeRoundButton(hud._sideDiam);
+  hud.root.addChild(hud.btnSpeed, hud.btnInfo);
 
   const sideGap = Math.round(hud._spinDiam * 0.10);
   const sideOffset = (hud._spinDiam / 2) + (hud._sideDiam / 2) + sideGap;
@@ -1164,6 +1026,7 @@ function buildHUD() {
 
   hud.btnInfo.on("pointerup", () => togglePaytable());
 
+  // sync
   hudUpdateNumbers();
   hudUpdateFsBadge();
   hudSetBetBandLocked(spinning);
@@ -1176,7 +1039,7 @@ function hudSetBetBandLocked(locked) {
   hud._betLocked = !!locked;
   if (!hud.betBand) return;
 
-  hud.betBand.alpha = locked ? 0.62 : 1.0;
+  hud.betBand.alpha = locked ? 0.70 : 1.0;
   hud.betBand.interactiveChildren = !locked;
   hud.betBand.interactive = !locked;
 
@@ -1191,16 +1054,74 @@ function hudSetBetBandLocked(locked) {
   }
 }
 
-// ================== BET BAND ==================
+// ---- bet chips ----
+function makeBetChip(valueCents, w, h) {
+  const c = new PIXI.Container();
+  c.interactive = true;
+  c.buttonMode = true;
+
+  const r = Math.min(16, Math.round(h * 0.40));
+
+  const bg = new PIXI.Graphics();
+  bg.beginFill(0x0b1220, 0.86);
+  bg.lineStyle(2, 0xf2b632, 1);
+  bg.drawRoundedRect(-w / 2, -h / 2, w, h, r);
+  bg.endFill();
+
+  // petit shine
+  const shine = new PIXI.Graphics();
+  shine.beginFill(0xffffff, 0.05);
+  shine.drawRoundedRect(-w/2 + 6, -h/2 + 6, w - 12, h * 0.28, Math.min(r, 12));
+  shine.endFill();
+
+  const eur = new PIXI.Text("EUR", new PIXI.TextStyle({
+    fontFamily: "system-ui",
+    fontSize: Math.round(h * 0.18),
+    fill: 0xffffff,
+    fontWeight: "900",
+    stroke: 0x000000,
+    strokeThickness: 2,
+  }));
+  eur.anchor.set(0.5);
+  eur.y = -h * 0.30;
+
+  const val = new PIXI.Text(fmtMoneyFromCents(valueCents), new PIXI.TextStyle({
+    fontFamily: "ui-monospace, Menlo, monospace",
+    fontSize: Math.round(h * 0.38),
+    fill: 0xffffff,
+    fontWeight: "900",
+    stroke: 0x000000,
+    strokeThickness: 3,
+  }));
+  val.anchor.set(0.5);
+  val.y = -h * 0.02;
+
+  const mise = new PIXI.Text("MISE", new PIXI.TextStyle({
+    fontFamily: "system-ui",
+    fontSize: Math.round(h * 0.18),
+    fill: 0xf2b632,
+    fontWeight: "900",
+    stroke: 0x000000,
+    strokeThickness: 2,
+  }));
+  mise.anchor.set(0.5);
+  mise.y = h * 0.30;
+
+  c.addChild(bg, shine, eur, val, mise);
+  c._bg = bg;
+  return c;
+}
+
+// ================== BET BAND (sans cadre global) ==================
 function hudSetBetScroll(x) {
-  const bandW = hud._betBandW || 0;
-  const contentW = hud._betContentW || 0;
+  const bandW = hud._betBandW || hud.betBand.width;
+  const contentW = hud._betContentW || hud.betStrip.width;
 
   const minX = Math.min(0, bandW - contentW);
   const maxX = 0;
 
   hud._betScrollX = Math.max(minX, Math.min(maxX, x));
-  if (hud.betStrip) hud.betStrip.x = hud._betScrollX;
+  hud.betStrip.x = hud._betScrollX;
 }
 
 function hudTweenBetScrollTo(targetX, ms = 220) {
@@ -1217,12 +1138,12 @@ function hudTweenBetScrollTo(targetX, ms = 220) {
   requestAnimationFrame(tick);
 }
 
-// snap: met un chip aligné “au début” du bandeau (look pro)
+// ✅ snap à GAUCHE (et pas au centre)
 function hudSnapBetToLeftSmooth(ms = 200) {
   if (!hud.betChips?.length) return;
 
   const leftPad = hud._betLeftPad ?? 16;
-  const bandW = hud._betBandW || 0;
+  const bandW = hud._betBandW || hud.betBand.width;
   if ((hud._betContentW || 0) <= bandW) return;
 
   let best = null;
@@ -1269,25 +1190,31 @@ function hudStartBetInertia() {
 
 function hudBuildBetBand(x, y, w, h) {
   hud._betBandW = w;
+  hud._betLeftPad = 14;
 
   hud.betBand = new PIXI.Container();
   hud.betBand.x = x;
   hud.betBand.y = y;
 
-  hud.betBand.addChild(makeRoundedPanel(w, h, Math.min(18, h * 0.45)));
+  // hit area invisible (pas de cadre global)
+  const hit = new PIXI.Graphics();
+  hit.beginFill(0xffffff, 0.001);
+  hit.drawRect(0, 0, w, h);
+  hit.endFill();
+  hud.betBand.addChild(hit);
 
   hud.betStrip = new PIXI.Container();
   hud.betStrip.x = 0;
-  hud.betStrip.y = 0;
+  hud.betStrip.y = Math.round(h / 2); // centre vertical des chips
+  hud.betBand.addChild(hud.betStrip);
 
+  // mask plein écran (pas arrondi)
   const mask = new PIXI.Graphics();
   mask.beginFill(0xffffff, 1);
-  mask.drawRoundedRect(6, 6, w - 12, h - 12, Math.min(16, h * 0.45));
+  mask.drawRect(0, 0, w, h);
   mask.endFill();
   mask.renderable = false;
-
   hud.betBand.addChild(mask);
-  hud.betBand.addChild(hud.betStrip);
   hud.betStrip.mask = mask;
 
   hud.betChips.forEach(c => c.destroy({ children: true }));
@@ -1297,11 +1224,13 @@ function hudBuildBetBand(x, y, w, h) {
   const chipH = hud._chipH;
   const gap = hud._chipGap;
 
-  const leftPad = hud._betLeftPad ?? 16;
-  const rightPad = hud._betRightPad ?? 16;
+  const leftPad = hud._betLeftPad;
+
+  // ✅ IMPORTANT : rightPad NEGATIF => demi-card visible à droite (indice scroll)
+  const rightPad = -Math.round(chipW * 0.50);
 
   let cx = leftPad + chipW / 2;
-  const cy = h / 2;
+  const cy = 0;
 
   const N = hud.betValuesCents.length;
   hud._betContentW = leftPad + rightPad + (N * chipW) + ((N - 1) * gap);
@@ -1341,6 +1270,7 @@ function hudBuildBetBand(x, y, w, h) {
       else hudSnapBetToLeftSmooth(180);
     } else {
       hudStopBetInertia();
+      hudSnapBetToLeftSmooth(180);
     }
     return moved;
   };
@@ -1363,6 +1293,7 @@ function hudBuildBetBand(x, y, w, h) {
       if (moved < TAP_THRESHOLD) {
         betCents = vCents;
         hudUpdateNumbers();
+        hudSnapBetToLeftSmooth(180);
       }
     });
 
@@ -1382,22 +1313,48 @@ function hudBuildBetBand(x, y, w, h) {
   hud.betBand.on("pointerup", () => { dragEnd(); });
   hud.betBand.on("pointerupoutside", () => { dragEnd(); });
 
-  // ✅ overlay lock: clean (juste dim, pas de texte)
+  // ✅ overlay lock (clean)
   const lock = new PIXI.Container();
   const dim = new PIXI.Graphics();
-  dim.beginFill(0x000000, 0.30);
-  dim.drawRoundedRect(6, 6, w - 12, h - 12, Math.min(16, h * 0.45));
+  dim.beginFill(0x000000, 0.25);
+  dim.drawRect(0, 0, w, h);
   dim.endFill();
   lock.addChild(dim);
+
+  const pillW = Math.round(Math.min(w * 0.46, 220));
+  const pillH = Math.round(Math.max(26, h * 0.44));
+
+  const pill = new PIXI.Graphics();
+  pill.beginFill(0x0b1220, 0.85);
+  pill.lineStyle(2, 0xf2b632, 1);
+  pill.drawRoundedRect(-pillW / 2, -pillH / 2, pillW, pillH, Math.round(pillH / 2));
+  pill.endFill();
+  pill.x = w / 2;
+  pill.y = h / 2;
+  lock.addChild(pill);
+
+  const t = new PIXI.Text("MISE BLOQUÉE", new PIXI.TextStyle({
+    fontFamily: "system-ui",
+    fontSize: Math.round(pillH * 0.42),
+    fill: 0xffffff,
+    fontWeight: "900",
+    stroke: 0x000000,
+    strokeThickness: 3,
+  }));
+  t.anchor.set(0.5);
+  t.x = w / 2;
+  t.y = h / 2;
+  lock.addChild(t);
 
   lock.visible = false;
   lock.alpha = 0.0;
   hud.betLockOverlay = lock;
   hud.betBand.addChild(lock);
 
-  // init scroll (0) + snap clean
   hudSetBetScroll(0);
-  hudSnapBetToLeftSmooth(0);
+
+  // ✅ petit snap au lancement pour look “casino”
+  requestAnimationFrame(() => hudSnapBetToLeftSmooth(1));
 
   return hud.betBand;
 }
@@ -1524,7 +1481,6 @@ BONUS : 3+ => 10 free spins (gains x2)`;
   bg.lineStyle(2, 0xf2b632, 1);
   bg.drawRoundedRect(-btnW/2, -btnH/2, btnW, btnH, Math.min(18, btnH*0.45));
   bg.endFill();
-
   const tt = new PIXI.Text("FERMER", new PIXI.TextStyle({
     fontFamily: "system-ui",
     fontSize: Math.round(btnH * 0.42),
@@ -1534,7 +1490,6 @@ BONUS : 3+ => 10 free spins (gains x2)`;
     strokeThickness: 3,
   }));
   tt.anchor.set(0.5);
-
   btn.addChild(bg, tt);
   btn.x = boxW / 2;
   btn.y = boxH - pad - btnH / 2;
@@ -1810,7 +1765,7 @@ function updateHighlight(delta) {
   }
 }
 
-// PAYLINES front (coords [col,row] pour highlight)
+// PAYLINES front
 const PAYLINES_UI = [
   [[0, 0],[1, 0],[2, 0],[3, 0],[4, 0]],
   [[0, 1],[1, 1],[2, 1],[3, 1],[4, 1]],
