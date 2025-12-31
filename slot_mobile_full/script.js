@@ -1083,7 +1083,7 @@ function hudTweenBetScrollTo(targetX, ms = 220) {
 function hudSnapBetToLeftExact(ms = 200) {
   if (!hud.betChips?.length) return;
 
-  const leftPad = 0; // IMPORTANT: pas de padding => rien ne dépasse
+  const leftPad = hud._betLeftPad || 0; // ✅ snap sur le padding (cadre jamais coupé)
   const bandW = hud._betBandW || hud.betBand.width;
   if ((hud._betContentW || 0) <= bandW) return;
 
