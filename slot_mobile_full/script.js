@@ -750,12 +750,137 @@ function hudSetStatusMessage(msg) {
   if (hud.statusText) hud.statusText.text = String(msg || "");
 }
 
+// ================== HUD LAYOUT (ANTI CHEVAUCHEMENT) + FS BADGE ==================
+function measureTextW(str, style) {
+  try {
+    return PIXI.TextMetrics.measureText(String(str || ""), style).width || 0;
+  } catch (_) {
+    return 0;
+  }
+}
+
+function ellipsizePixi(str, style, maxW) {
+  const s0 = String(str || "");
+  if (measureTextW(s0, style) <= maxW) return s0;
+
+  const ell = "…";
+  let s = s0;
+  while (s.length > 1 && measureTextW(s + ell, style) > maxW) {
+    s = s.slice(0, -1);
+  }
+  return (s.length ? s : s0.slice(0, 1)) + ell;
+}
+
+function hudLayoutMeterPanel() {
+  if (!hud.meterPanel || !hud.statusText || !hud.soldeValue || !hud.gainValue) return;
+
+  const meterW = hud._meterW || hud.meterPanel.width;
+  const meterH = hud._meterH || hud.meterPanel.height;
+
+  const padX = 14;
+  const topY = 8;
+
+  // Mesure réserve gauche/droite selon largeur réelle
+  const leftMaxW =
+    Math.max(
+      hud.soldeLabel?.width || 0,
+      hud.soldeValue?.width || 0,
+      hud.soldeEur?.width || 0
+    ) + padX * 2;
+
+  const rightMaxW =
+    Math.max(
+      hud.gainLabel?.width || 0,
+      hud.gainValue?.width || 0,
+      hud.gainEur?.width || 0
+    ) + padX * 2;
+
+  let reserveSide = Math.max(leftMaxW, rightMaxW);
+
+  const minReserve = Math.round(meterW * 0.26);
+  const maxReserve = Math.round(meterW * 0.40);
+  reserveSide = Math.max(minReserve, Math.min(maxReserve, reserveSide));
+
+  const centerW = Math.max(40, meterW - reserveSide * 2);
+
+  // --- SOLDE (gauche) ---
+  if (hud.soldeLabel) { hud.soldeLabel.x = padX; hud.soldeLabel.y = topY; }
+
+  if (hud.soldeValue) {
+    hud.soldeValue.x = padX;
+    hud.soldeValue.y = (hud.soldeLabel?.y || topY) + (hud.soldeLabel?.height || 0) + 1;
+  }
+
+  if (hud.soldeEur) {
+    hud.soldeEur.x = padX;
+    hud.soldeEur.y = (hud.soldeValue?.y || 0) + (hud.soldeValue?.height || 0) - 2;
+  }
+
+  // --- GAIN (droite) ---
+  if (hud.gainLabel) { hud.gainLabel.anchor.set(1, 0); hud.gainLabel.x = meterW - padX; hud.gainLabel.y = topY; }
+
+  if (hud.gainValue) {
+    hud.gainValue.anchor.set(1, 0);
+    hud.gainValue.x = meterW - padX;
+    hud.gainValue.y = (hud.gainLabel?.y || topY) + (hud.gainLabel?.height || 0) + 1;
+  }
+
+  if (hud.gainEur) {
+    hud.gainEur.anchor.set(1, 0);
+    hud.gainEur.x = meterW - padX;
+    hud.gainEur.y = (hud.gainValue?.y || 0) + (hud.gainValue?.height || 0) - 2;
+  }
+
+  // --- STATUT (centre) ---
+  hud.statusText.anchor.set(0.5, 0.5);
+  hud.statusText.x = reserveSide + centerW / 2;
+  hud.statusText.y = meterH * 0.52;
+
+  const style = hud.statusText.style;
+  const maxW = Math.round(centerW * 0.98);
+  const maxH = Math.round(meterH * 0.58);
+
+  style.wordWrap = true;
+  style.wordWrapWidth = maxW;
+
+  let fontSize = hud._statusBaseSize || Math.round(meterH * 0.22);
+  const minSize = Math.max(12, Math.round(meterH * 0.16));
+
+  style.fontSize = fontSize;
+  style.lineHeight = Math.round(fontSize * 1.12);
+  hud.statusText.updateText();
+
+  // Réduit la taille si ça dépasse en hauteur
+  while (hud.statusText.height > maxH && fontSize > minSize) {
+    fontSize -= 1;
+    style.fontSize = fontSize;
+    style.lineHeight = Math.round(fontSize * 1.12);
+    hud.statusText.updateText();
+  }
+
+  // Si c’est encore trop haut => 1 ligne + ellipsis
+  if (hud.statusText.height > maxH) {
+    style.wordWrap = false;
+    style.fontSize = minSize;
+    style.lineHeight = Math.round(minSize * 1.12);
+    hud.statusText.text = ellipsizePixi(hud.statusText.text, style, maxW);
+    hud.statusText.updateText();
+  }
+}
+
+// ✅ FS badge: cache vraiment le cadre si pas de free spins
 function hudUpdateFsBadge() {
-  // ✅ cache le cadre inutile en haut à droite si pas de FS
-  if (hud.topPanel) hud.topPanel.visible = freeSpins > 0;
+  const hasFS = (Number(freeSpins) || 0) > 0;
+
+  if (hud.topPanel) {
+    hud.topPanel.visible = hasFS;
+    hud.topPanel.renderable = hasFS;
+    hud.topPanel.alpha = hasFS ? 1.0 : 0.0;
+  }
 
   if (!hud.fsBadge) return;
-  if (freeSpins > 0) {
+
+  if (hasFS) {
     const mult = (winMultiplier > 1) ? `×${winMultiplier}` : "";
     hud.fsBadge.text = `FS ${freeSpins} ${mult}`.trim();
     hud.fsBadge.alpha = 0.95;
