@@ -747,7 +747,9 @@ function hudRefreshSpeedButtonLabel() {
 }
 
 function hudSetStatusMessage(msg) {
-  if (hud.statusText) hud.statusText.text = String(msg || "");
+  if (!hud.statusText) return;
+  hud.statusText.text = String(msg || "");
+  hudLayoutMeterPanel(); // ✅ recalcul positions + taille
 }
 
 // ================== HUD LAYOUT (ANTI CHEVAUCHEMENT) + FS BADGE ==================
