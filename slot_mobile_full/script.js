@@ -1,11 +1,24 @@
 // script.js — Slot mobile PIXI v5 (5x3) — PRO CASINO MODE (Render-ready)
-// ✅ UI polish iPhone: panels smaller, no useless top-right panel, icon-only buttons
-// ✅ Status text auto-fit to avoid overlaps
-// ✅ Bet lock overlay cleaned (icon, no huge text)
+// ✅ FIX définitif: compat PIXI v5 -> drawArc() polyfill (évite crash iPhone)
+// ✅ UI iPhone: panneaux + petits, pas de cadre inutile, boutons icônes only
+// ✅ Status text auto-fit (évite chevauchements)
+// ✅ Bet lock overlay clean (icone)
 // ✅ AbortController timeout réel client sur /spin
 // ✅ Anti double-tap iOS sur SPIN (start only)
 // ✅ Lock visuel + lock input bande de mise pendant spin
-// ✅ Protection anti “réponse tardive” (spinId) => évite ERREUR après 1er spin
+// ✅ Protection anti “réponse tardive” (spinId)
+
+// --- PIXI v5 compat: some old code may call drawArc() ---
+// PIXI v5 has graphics.arc(), not graphics.drawArc()
+if (window.PIXI?.Graphics && !PIXI.Graphics.prototype.drawArc) {
+  PIXI.Graphics.prototype.drawArc = function (cx, cy, radius, startAngle, endAngle, anticlockwise) {
+    this.arc(cx, cy, radius, startAngle, endAngle, anticlockwise);
+    return this;
+  };
+}
+
+// Version debug (pour vérifier le cache iPhone)
+console.log("SCRIPT.JS VERSION =", "v2026-02-02-clean-01");
 
 PIXI.settings.ROUND_PIXELS = true;
 PIXI.settings.MIPMAP_TEXTURES = PIXI.MIPMAP_MODES.OFF;
@@ -196,11 +209,11 @@ function loadSpritesheet() {
   });
 }
 
-// ------------------ HUD state (déclaré tôt) ------------------
+// ------------------ HUD state ------------------
 let hud = {
   root: null,
 
-  // petit badge FS (dans le panneau meter maintenant)
+  // badge FS (dans le panneau meter)
   fsBadge: null,
 
   meterPanel: null,
@@ -552,7 +565,7 @@ function makeTextStyleLabel(size) {
     fontFamily: "system-ui",
     fontSize: size,
     fill: 0xF3F4F6,
-    fontWeight: "560",
+    fontWeight: "700",
     stroke: 0x000000,
     strokeThickness: 1,
     dropShadow: true,
@@ -566,7 +579,7 @@ function makeTextStyleValue(size) {
     fontFamily: "ui-monospace, Menlo, monospace",
     fontSize: size,
     fill: 0xFFFFFF,
-    fontWeight: "720",
+    fontWeight: "900",
     stroke: 0x000000,
     strokeThickness: 2,
     dropShadow: true,
@@ -626,11 +639,10 @@ function makeRoundedPanel(w, h, radius, borderColor = 0xf2b632) {
 function drawPlayIcon(g, diam) {
   g.clear();
   const r = diam * 0.20;
-  const x = 0, y = 0;
   g.beginFill(0xffffff, 0.95);
-  g.moveTo(x - r * 0.55, y - r);
-  g.lineTo(x - r * 0.55, y + r);
-  g.lineTo(x + r * 0.95, y);
+  g.moveTo(-r * 0.55, -r);
+  g.lineTo(-r * 0.55,  r);
+  g.lineTo( r * 0.95,  0);
   g.closePath();
   g.endFill();
 }
@@ -660,17 +672,17 @@ function drawSpeedIcon(g, diam, level /* 1..3 */) {
   const lw = Math.max(2, Math.round(diam * 0.028));
   g.lineStyle(lw, 0xffffff, 0.92);
 
-  // lightning bolt
+  // bolt
   const s = diam * 0.22;
   g.moveTo(-s * 0.20, -s * 0.95);
-  g.lineTo(s * 0.25, -s * 0.20);
-  g.lineTo(0, -s * 0.20);
-  g.lineTo(s * 0.20, s * 0.95);
-  g.lineTo(-s * 0.25, s * 0.20);
-  g.lineTo(0, s * 0.20);
+  g.lineTo( s * 0.25, -s * 0.20);
+  g.lineTo( 0,        -s * 0.20);
+  g.lineTo( s * 0.20,  s * 0.95);
+  g.lineTo(-s * 0.25,  s * 0.20);
+  g.lineTo( 0,         s * 0.20);
   g.lineTo(-s * 0.20, -s * 0.95);
 
-  // bars under
+  // bars
   const barY = diam * 0.20;
   const gap = diam * 0.055;
   const bw = diam * 0.06;
@@ -709,7 +721,6 @@ function makeRoundIconButton(diam, kind /* "spin"|"speed"|"info" */) {
   c._icon = icon;
   c._kind = kind;
 
-  // default icons
   if (kind === "spin") drawPlayIcon(icon, diam);
   if (kind === "speed") drawSpeedIcon(icon, diam, Math.min(3, speedIndex + 1));
   if (kind === "info") drawInfoIcon(icon, diam);
@@ -745,11 +756,9 @@ function fitTextToBox(textObj, maxW, maxH, startSize, minSize) {
   if (!textObj) return;
   let size = startSize;
 
-  // Safety: avoid infinite loops
   for (let i = 0; i < 22; i++) {
     textObj.style = new PIXI.TextStyle({ ...textObj.style, fontSize: size });
     textObj.updateText?.();
-
     if (textObj.width <= maxW && textObj.height <= maxH) break;
     size -= 1;
     if (size <= minSize) break;
@@ -761,7 +770,6 @@ function hudSetStatusMessage(msg) {
   if (!hud.statusText || !hud.meterPanel) return;
   hud.statusText.text = String(msg || "");
 
-  // Auto-fit to center column to avoid overlaps on iPhone
   const meterW = hud.meterPanel.width;
   const meterH = hud.meterPanel.height;
   const colW = meterW / 3;
@@ -838,12 +846,12 @@ function buildHUD() {
   hud.root = new PIXI.Container();
   app.stage.addChild(hud.root);
 
-  // tailles boutons (un poil plus petits pour l'esthétique)
+  // tailles boutons
   hud._spinDiam = Math.round(Math.min(w * 0.23, h * 0.118));
   hud._sideDiam = Math.round(hud._spinDiam * 0.62);
   const spinY = Math.round(h - safeBottom - hud._spinDiam / 2 - 10);
 
-  // bet band sizes (un peu plus petit)
+  // bet band sizes
   hud._chipW = Math.round(Math.min(92, w * 0.195));
   hud._chipH = Math.round(Math.max(54, h * 0.066));
   hud._chipGap = Math.round(hud._chipW * 0.14);
@@ -855,7 +863,7 @@ function buildHUD() {
 
   hud.root.addChild(hudBuildBetBand(bandX, bandY, bandW, bandH));
 
-  // panneau bas (un peu plus petit)
+  // panneau infos (plus petit)
   const meterW = bandW;
   const meterH = Math.round(Math.max(66, h * 0.082));
   const meterX = bandX;
@@ -871,7 +879,7 @@ function buildHUD() {
   // SOLDE
   const soldeLabel = new PIXI.Text("SOLDE", makeTextStyleLabel(Math.round(meterH * 0.18)));
   soldeLabel.x = 14;
-  soldeLabel.y = 10;
+  soldeLabel.y = 8;
 
   hud.soldeValue = new PIXI.Text(fmtMoneyFromCents(balanceCents), makeTextStyleValue(Math.round(meterH * 0.38)));
   hud.soldeValue.x = 14;
@@ -881,7 +889,7 @@ function buildHUD() {
   soldeEur.x = 14;
   soldeEur.y = Math.min(meterH - soldeEur.height - 6, hud.soldeValue.y + hud.soldeValue.height - 2);
 
-  // STATUT (auto-fit pour éviter chevauchements)
+  // STATUT
   hud.statusText = new PIXI.Text("", new PIXI.TextStyle({
     fontFamily: "system-ui",
     fontSize: Math.round(meterH * 0.22),
@@ -898,11 +906,11 @@ function buildHUD() {
   hud.statusText.x = colW * 1.5;
   hud.statusText.y = meterH * 0.56;
 
-  // DERNIER GAIN
+  // GAIN
   const gainLabel = new PIXI.Text("GAIN", makeTextStyleLabel(Math.round(meterH * 0.18)));
   gainLabel.anchor.set(1, 0);
   gainLabel.x = meterW - 14;
-  gainLabel.y = 10;
+  gainLabel.y = 8;
 
   hud.gainValue = new PIXI.Text(fmtMoneyFromCents(lastWinCents), makeTextStyleValue(Math.round(meterH * 0.38)));
   hud.gainValue.anchor.set(1, 0);
@@ -914,7 +922,7 @@ function buildHUD() {
   gainEur.x = meterW - 14;
   gainEur.y = Math.min(meterH - gainEur.height - 6, hud.gainValue.y + hud.gainValue.height - 2);
 
-  // badge FS (plus de cadre en haut à droite)
+  // badge FS (centre haut, discret)
   hud.fsBadge = new PIXI.Text("", new PIXI.TextStyle({
     fontFamily: "ui-monospace, Menlo, monospace",
     fontSize: Math.round(meterH * 0.18),
@@ -925,7 +933,7 @@ function buildHUD() {
   }));
   hud.fsBadge.anchor.set(0.5, 0);
   hud.fsBadge.x = meterW * 0.5;
-  hud.fsBadge.y = 8;
+  hud.fsBadge.y = 6;
   hud.fsBadge.visible = false;
   hud.fsBadge.alpha = 0;
 
@@ -988,7 +996,6 @@ function hudSetBetBandLocked(locked) {
   hud.betBand.interactiveChildren = !locked;
   hud.betBand.interactive = !locked;
 
-  // on dim les chips pour éviter “texte qui se chevauche”
   if (hud.betStrip) hud.betStrip.alpha = locked ? 0.18 : 1.0;
 
   if (hud.betLockOverlay) {
@@ -1242,7 +1249,7 @@ function hudBuildBetBand(x, y, w, h) {
   hud.betBand.on("pointerup", () => { dragEnd(); });
   hud.betBand.on("pointerupoutside", () => { dragEnd(); });
 
-  // overlay lock (clean)
+  // overlay lock (clean) — IMPORTANT: on utilise arc(), compatible v5
   const lock = new PIXI.Container();
   const dim = new PIXI.Graphics();
   dim.beginFill(0x000000, 0.38);
@@ -1250,21 +1257,17 @@ function hudBuildBetBand(x, y, w, h) {
   dim.endFill();
   lock.addChild(dim);
 
-  // lock icon
   const ico = new PIXI.Graphics();
   const cxI = w / 2;
   const cyI = h / 2;
-
   const s = Math.min(h, w) * 0.22;
 
   ico.lineStyle(Math.max(2, Math.round(h * 0.035)), 0xffffff, 0.92);
 
-  // corps
   ico.beginFill(0xffffff, 0.10);
   ico.drawRoundedRect(cxI - s * 0.55, cyI - s * 0.20, s * 1.1, s * 0.70, s * 0.20);
   ico.endFill();
 
-  // anse (PIXI v5)
   ico.moveTo(cxI - s * 0.45, cyI - s * 0.20);
   ico.arc(cxI, cyI - s * 0.20, s * 0.45, Math.PI, 0);
 
@@ -1690,12 +1693,10 @@ async function spinRequestToServer(spinId, preset) {
     SPIN_REQUEST_TIMEOUT_MS
   );
 
-  // ignore réponse tardive
   if (spinId !== currentSpinId) return null;
 
   if (data?.error) {
     pendingOutcome = { error: data.error, ...data };
-    // fallback grid -> anim termine proprement
     pendingGrid = captureVisibleGrid();
     gridArrivedAt = performance.now();
     ensurePlansAfterGrid(preset);
@@ -1765,7 +1766,6 @@ async function onSpinOrStop() {
   const now = performance.now();
   prepareReelPlans(now, preset);
 
-  // requête + anim en parallèle
   const reqPromise = spinRequestToServer(mySpinId, preset);
   const animPromise = animateSpinUntilDone(preset);
 
