@@ -1256,11 +1256,18 @@ function hudBuildBetBand(x, y, w, h) {
   const cyI = h / 2;
 
   const s = Math.min(h, w) * 0.22;
+
   ico.lineStyle(Math.max(2, Math.round(h * 0.035)), 0xffffff, 0.92);
+
+  // corps
   ico.beginFill(0xffffff, 0.10);
   ico.drawRoundedRect(cxI - s * 0.55, cyI - s * 0.20, s * 1.1, s * 0.70, s * 0.20);
   ico.endFill();
-  ico.drawArc(cxI, cyI - s * 0.20, s * 0.45, Math.PI, 0);
+
+  // anse (PIXI v5)
+  ico.moveTo(cxI - s * 0.45, cyI - s * 0.20);
+  ico.arc(cxI, cyI - s * 0.20, s * 0.45, Math.PI, 0);
+
   lock.addChild(ico);
 
   lock.visible = false;
