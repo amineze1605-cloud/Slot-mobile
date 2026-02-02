@@ -1158,7 +1158,7 @@ function hudBuildBetBand(x, y, w, h) {
   const chipH = hud._chipH;
   const gap = hud._chipGap;
 
-  const leftPad = 0;
+  const leftPad = hud._betLeftPad || 0; // ✅ décale légèrement la première carte à droite
   const rightPad = 0;
 
   let cx = leftPad + chipW / 2;
