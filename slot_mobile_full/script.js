@@ -876,12 +876,19 @@ function buildHUD() {
   const bandX = Math.round((w - bandW) / 2);
 
   hud._chipGap = clampInt(Math.round(w * 0.018), 8, 14);
+
+  // ✅ petit décalage à droite pour éviter que le cadre soit “coupé” par le mask
+  hud._betLeftPad = clampInt(Math.round(w * 0.014), 5, 10); // ~5-10px selon écran
+
+  // ✅ on veut toujours ~4.5 cartes visibles (la suivante coupée à droite)
   const desiredVisible = 4.5;
-  let chipW = Math.round((bandW - hud._chipGap * 4) / desiredVisible);
+
+  // ✅ largeur calculée sur la zone utile (bandW - leftPad)
+  let chipW = Math.round((bandW - hud._betLeftPad - hud._chipGap * 4) / desiredVisible);
   chipW = clampInt(chipW, 78, 106);
+
   hud._chipW = chipW;
   hud._chipH = clampInt(Math.round(chipW * 0.78), 54, 84);
-
   const bandY = Math.round(spinY - hud._spinDiam / 2 - bandH - 10);
   hud.root.addChild(hudBuildBetBand(bandX, bandY, bandW, bandH));
 
